@@ -1,0 +1,17 @@
+{
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "http-server": "^14.1.1"
+  },
+  "dependencies": {
+    "bezier-js": "^6.1.4",
+    "genetic-js": "^0.1.14",
+    "image-js": "^0.35.6"
+  },
+  "scripts": {
+    "build": "esbuild src/app.js --bundle --outfile=public/script.js",
+    "watch": "esbuild src/app.js --bundle --outfile=public/script.js --watch",
+    "serve": "esbuild src/app.js --sourcemap=inline --bundle --outfile=public/script.js --servedir=public/",
+    "run": "npx http-server -o"
+  }
+}
