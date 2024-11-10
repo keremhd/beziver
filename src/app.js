@@ -13,11 +13,13 @@ ResultCtx.canvas.height = 100;
 
 const ButtonRandom = document.getElementById('random');
 const ButtonFit = document.getElementById('fit');
+const ButtonContour = document.getElementById('contour');
 
 
 InputFileUpload.addEventListener("change", onChange);
 ButtonRandom.addEventListener("click", onRandom);
 ButtonFit.addEventListener("click", onFit);
+ButtonContour.addEventListener("click", onContour);
 
 
 function onChange() {
@@ -50,6 +52,74 @@ function onChange() {
         fileReader.readAsDataURL(file[0]);
     }
 }
+
+function onContour() {
+    console.log("contour");
+    let w = InputCtx.canvas.width;
+    let h = InputCtx.canvas.height;
+
+    let x;
+    let y;
+    let arr = [];
+    
+    for (y = 0; y < h; y++) {
+        arr.push([]);
+        for (x = 0; x < w; x++) {
+            arr[y].push(0);
+        }
+    }
+
+    let img = InputCtx.getImageData(0,0,w,h).data;
+    let y1 = -1;
+    let x1 = -1;
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            let idx = y * w * 4 + x * 4;
+            let val = img[idx];
+            if (val != 0 && val != 255) {
+                arr[y][x] = 1;
+            }
+        }
+    }
+
+    // All points with conflicts
+    let contour = [];
+    let mx = 0;
+    let my = 0;
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            if (arr[y][x]) {
+                if ( y == 0 || y == h-1 || x == 0 || x == w-1 ||
+                     !arr[y-1][x] || !arr[y][x-1] || !arr[y][x+1] || !arr[y+1][x] ) {
+                    contour.push([x,y]);
+                    mx += x;
+                    my += y;
+                }  
+            }
+        }
+    }
+    
+    // Find center
+    mx /= contour.length;
+    my /= contour.length;
+
+    // Sort points
+    let side = (a1,b1,a2,b2,a3,b3) => {
+        return (b2-b1)*(a3-a2) - (a2-a1)*(b3-b2);
+    }
+
+    contour.sort( (a,b) => ( (a[0]-mx)*(b[1]-my) - (b[0]-mx)*(a[1]-my)) );
+    console.log(contour);
+
+    ResultCtx.clearRect(0,0,w,h);
+    ResultCtx.drawImage(InputCtx.canvas, 0, 0);
+
+    ResultCtx.fillStyle = "rgb(255 0 0)";
+    for (let i = 0; i < contour.length; i++) {
+        ResultCtx.fillRect(contour[i][0], contour[i][1], 1, 1);
+    }
+}
+
 
 let newControlGrid = (N, randomize) => {
 
