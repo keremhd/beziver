@@ -4,23 +4,20 @@ import { Bezier } from "bezier-js";
 
 (() => {
 
-
-
-var genetic = Genetic.create();
-
-
 const InputFileUpload = document.getElementById("file-upload");
 const ImgSource = document.getElementById('source');
 const ImgResult = document.getElementById('result');
 
 const CanvasResult = document.getElementById('result-canvas');
-const ButtonRun = document.getElementById('run');
+const ButtonRandom = document.getElementById('random');
+const ButtonFit = document.getElementById('fit');
 
 
 InputFileUpload.addEventListener("change", onChange);
-ButtonRun.addEventListener("click", onRun);
+ButtonRandom.addEventListener("click", onRandom);
+ButtonFit.addEventListener("click", onFit);
 
-var GreyImage = null;
+var InputCanvas = new OffscreenCanvas(100, 100);
 
 async function onChange() {
     const file = InputFileUpload.files;
@@ -31,20 +28,25 @@ async function onChange() {
             ImgSource.setAttribute('src', event.target.result);
 
             let image = await IJS.Image.load(ImgSource.src);
-            GreyImage = image.grey().resize({ width:200, height: 200});
+            GreyImage = image.grey().resize({ width:InputCanvas.width, height: InputCanvas.height});
         
             ImgSource.src = GreyImage.toDataURL();
+
+            var rgba = GreyImage.getRGBAData({clamped:true});
+            var idata = new ImageData(rgba, GreyImage.width, GreyImage.height);
+            InputCanvas.getContext("2d").putImageData(idata, 0, 0);
         };
         
         fileReader.readAsDataURL(file[0]);
     }
 }
 
-function newPoint(x,y,z) {
-    return { x:x, y:y, z:z };
-}
+let newControlGrid = (N, randomize) => {
 
-function newControlGrid(N, randomize) {
+    let newPoint = (x,y,z) => {
+        return { x:x, y:y, z:z };
+    }
+
     var points = [];
 
     for (var j = 0; j < N; j++) {
@@ -60,24 +62,25 @@ function newControlGrid(N, randomize) {
     return points;
 }
 
-function drawQuad(ctx,W,H,p1,p2,p3,p4) {
-    var z = (p1.z + p2.z + p3.z + p4.z) / 4;
-    if (z < 0) z = 0;
-    if (z > 1) z = 1;
-
-    const grayTone = Math.round(z*255);
-    ctx.fillStyle = `rgb(${grayTone} ${grayTone} ${grayTone})`;
-
-    ctx.beginPath();
-    ctx.moveTo(p1.x * W - .5, p1.y * H - .5);
-    ctx.lineTo(p2.x * W + .5, p2.y * H - .5);
-    ctx.lineTo(p3.x * W + .5, p3.y * H + .5);
-    ctx.lineTo(p4.x * W - .5, p4.y * H + .5);
-    ctx.closePath();
-    ctx.fill();
-}
-
 function drawControlGrid(canvas, controlGrid, $fn) {
+
+    let drawQuad = (ctx,W,H,p1,p2,p3,p4) => {
+        var z = (p1.z + p2.z + p3.z + p4.z) / 4;
+        if (z < 0) z = 0;
+        if (z > 1) z = 1;
+    
+        const grayTone = Math.round(z*255);
+        ctx.fillStyle = `rgb(${grayTone} ${grayTone} ${grayTone})`;
+    
+        ctx.beginPath();
+        ctx.moveTo(p1.x * W - .5, p1.y * H - .5);
+        ctx.lineTo(p2.x * W + .5, p2.y * H - .5);
+        ctx.lineTo(p3.x * W + .5, p3.y * H + .5);
+        ctx.lineTo(p4.x * W - .5, p4.y * H + .5);
+        ctx.closePath();
+        ctx.fill();
+    }
+
     var ctx = canvas.getContext("2d");
     var W = canvas.width;
     var H = canvas.height;
@@ -124,43 +127,126 @@ function drawControlGrid(canvas, controlGrid, $fn) {
     }
 }
 
-function calculateDistance(image1, canvas, numberOfSamples) {
-    var image2 = IJS.Image.fromCanvas(canvas);
+function calculateDistanceCanvas(canvas1, canvas2, numberOfSamples) {
+    var arr1 = canvas2array(canvas1);
+    var arr2 = canvas2array(canvas2);
+    return calculateDistance(arr1, arr2, numberOfSamples);
+}
 
+function calculateDistance(arr1, arr2, numberOfSamples) {
     var sumError = 0.0;
     for (var i = 0; i < numberOfSamples; i++) {
-        let x = Math.random();
-        let y = Math.random();
+        var xy = Math.random();
 
-        let v1 = image1.getPixelXY(Math.floor(x * image1.width), Math.floor(y * image1.height))[0];
-        let v2 = image2.getPixelXY(Math.floor(x * image2.width), Math.floor(y * image2.height))[0];
+        let offset1 = Math.round(xy * (arr1.length-1));
+        let offset2 = Math.round(xy * (arr2.length-1));
+
+        let v1 = arr1[offset1];
+        let v2 = arr2[offset2];
+        
         sumError += (v1-v2)**2;
     }
 
     return sumError/numberOfSamples;
 }
 
-async function onRun() {
+function canvas2array(canvas) {
+    var imageData = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+    var arr = []
+    let d = imageData.data;
+    for (var i = 0; i < imageData.width * imageData.height; i++) {
+        arr[i] = (d[4*i] + d[4*i+1] + d[4*i+2])/3;
+    }
 
-    var W = 200;
-    var H = 200;
-    var canvas = new OffscreenCanvas(W, H);
+    return arr;
+}
+
+async function onRandom() {
+    var W = 100;
+    var H = 100;
+    var outputCanvas = new OffscreenCanvas(W, H);
     let $fn = 10;
 
     var points = newControlGrid(4, true);
-    drawControlGrid(canvas, points, $fn);
+    drawControlGrid(outputCanvas, points, $fn);
 
-
-    console.log(calculateDistance(GreyImage, canvas, 1000));
-
+    console.log(calculateDistanceCanvas(InputCanvas, outputCanvas, 100));
 
     CanvasResult.width = W;
     CanvasResult.height = H;
     CanvasResult
         .getContext("bitmaprenderer")
         .transferFromImageBitmap(
-            canvas.transferToImageBitmap());
+            outputCanvas.transferToImageBitmap());
+}
 
+async function onFit() {
+    var genetic = Genetic.create();
+
+    genetic.newControlGrid = newControlGrid;
+    genetic.drawControlGrid = drawControlGrid;
+    genetic.calculateDistance = calculateDistance;
+    genetic.inputArray = canvas2array(InputCanvas);
+    genetic.canvas2array = canvas2array;
+    
+    genetic.seed = () => {
+        return this.newControlGrid(4, true);
+    }
+
+    genetic.fitness = (grid) => {
+        var canvas = new OffscreenCanvas(100, 100);
+        this.drawControlGrid(canvas, grid, 10);
+        
+        return this.calculateDistance(this.inputArray, this.canvas2array(canvas), 100);
+    }
+
+    genetic.mutate = (grid) => {
+        var j = Math.round(Math.random() * (grid.length-1));
+        var i = Math.round(Math.random() * (grid[j].length-1));
+
+        var p = grid[j][i];
+        let alpha = 1;
+        p.x += alpha * (Math.random() - 0.5);
+        p.y += alpha * (Math.random() - 0.5);
+        p.z += alpha * (Math.random() - 0.5);
+
+        return grid;
+    }
+
+    genetic.crossover = (grid1, grid2) => {
+        for (var k = 0; k < 10; k++) {
+            var j = Math.round(Math.random() * (grid1.length-1));
+            var i = Math.round(Math.random() * (grid1[j].length-1));
+
+            var p1 = grid1[j][i];
+            grid1[j][i] = grid2[j][i];
+            grid2[j][i] = p1;
+        }
+
+        return [grid1, grid2];
+    }
+
+    genetic.optimize = Genetic.Optimize.Minimize;
+    genetic.select1 = Genetic.Select1.RandomLinearRank;
+    genetic.select2 = Genetic.Select2.FittestRandom;
+
+    genetic.notification = (pop, gen, stats, isFinished) => {
+        console.log(gen, pop[0].fitness, stats);
+        
+        if(isFinished) {
+            var canvas = new OffscreenCanvas(100, 100);
+            drawControlGrid(canvas, pop[0].entity, 10);
+
+            CanvasResult
+                .getContext("bitmaprenderer")
+                .transferFromImageBitmap(
+                    canvas.transferToImageBitmap());
+
+            console.log(pop);
+        }
+    }
+
+    genetic.evolve({webWorkers: false, iterations:100});
 }
 
 })();
