@@ -6,7 +6,6 @@ import { Bezier } from "bezier-js";
 
 const InputFileUpload = document.getElementById("file-upload");
 const ImgSource = document.getElementById('source');
-const ImgResult = document.getElementById('result');
 
 const CanvasResult = document.getElementById('result-canvas');
 const ButtonRandom = document.getElementById('random');
@@ -17,7 +16,9 @@ InputFileUpload.addEventListener("change", onChange);
 ButtonRandom.addEventListener("click", onRandom);
 ButtonFit.addEventListener("click", onFit);
 
-var InputCanvas = new OffscreenCanvas(100, 100);
+var InputCanvas = document.getElementById('input-canvas');
+InputCanvas.width = 100;
+InputCanvas.height = 100;
 
 async function onChange() {
     const file = InputFileUpload.files;
@@ -165,19 +166,18 @@ async function onRandom() {
     var W = 100;
     var H = 100;
     var outputCanvas = new OffscreenCanvas(W, H);
-    let $fn = 10;
+    let $fn = 100;
 
     var points = newControlGrid(4, true);
     drawControlGrid(outputCanvas, points, $fn);
 
     console.log(calculateDistanceCanvas(InputCanvas, outputCanvas, 100));
 
-    CanvasResult.width = W;
-    CanvasResult.height = H;
-    CanvasResult
-        .getContext("bitmaprenderer")
-        .transferFromImageBitmap(
-            outputCanvas.transferToImageBitmap());
+    InputCanvas.width = W;
+    InputCanvas.height = H;
+    InputCanvas
+        .getContext("2d")
+        .drawImage(outputCanvas, 0, 0);
 }
 
 async function onFit() {
@@ -197,18 +197,30 @@ async function onFit() {
         var canvas = new OffscreenCanvas(100, 100);
         this.drawControlGrid(canvas, grid, 10);
         
-        return this.calculateDistance(this.inputArray, this.canvas2array(canvas), 100);
+        return this.calculateDistance(this.inputArray, this.canvas2array(canvas), 1000);
     }
 
     genetic.mutate = (grid) => {
         var j = Math.round(Math.random() * (grid.length-1));
         var i = Math.round(Math.random() * (grid[j].length-1));
 
-        var p = grid[j][i];
         let alpha = 1;
-        p.x += alpha * (Math.random() - 0.5);
-        p.y += alpha * (Math.random() - 0.5);
-        p.z += alpha * (Math.random() - 0.5);
+        let dx = alpha * (Math.random() - 0.5);
+        let dy = alpha * (Math.random() - 0.5);
+        let dz = alpha * (Math.random() - 0.5);
+        
+        for (var a = -1; a <= 1; a++) {
+            for (var b = -1; b <= 1; b++) {
+                if (j+a >= 0 && j+a < grid.length &&
+                    i+b >= 0 && i+b < grid[j+a].length) {
+                    var p = grid[j+a][i+b];
+                    p.x += dx;
+                    p.y += dy;
+                    p.z += dz;
+                }
+            }
+        }
+        
 
         return grid;
     }
@@ -230,17 +242,20 @@ async function onFit() {
     genetic.select1 = Genetic.Select1.RandomLinearRank;
     genetic.select2 = Genetic.Select2.FittestRandom;
 
+    genetic.generation = (pop, gen, stats) => {
+        return (pop[0].fitness > 100);
+    }
+
     genetic.notification = (pop, gen, stats, isFinished) => {
         console.log(gen, pop[0].fitness, stats);
         
         if(isFinished) {
             var canvas = new OffscreenCanvas(100, 100);
-            drawControlGrid(canvas, pop[0].entity, 10);
+            drawControlGrid(canvas, pop[0].entity, 20);
 
-            CanvasResult
-                .getContext("bitmaprenderer")
-                .transferFromImageBitmap(
-                    canvas.transferToImageBitmap());
+            let ctx = CanvasResult.getContext("2d");
+            ctx.clearRect(0,0, CanvasResult.width, CanvasResult.height);
+            ctx.drawImage(canvas, 0, 0);
 
             console.log(pop);
         }

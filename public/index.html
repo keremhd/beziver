@@ -7,16 +7,17 @@
         <h2>Input</h2>
         Pick heightmap:
         <input type="file" accept="image/*" id="file-upload"><br/>
+        <button id="random">Random</button>
 
-        <img id="source">
+        <div>
+            <img id="source" style="display:none">
+            <canvas id="input-canvas"></canvas>
+        </div>
 
         <h2>Output</h2>
         
         <div><canvas id="result-canvas"></canvas></div>
-        <div><img id="result"></div>
-
         
-        <button id="random">Random</button>
         <button id="fit">Fit</button>
 
     </body>
