@@ -1,11 +1,9 @@
 const Genetic = require('genetic-js');
-const IJS = require('image-js');
 import { Bezier } from "bezier-js";
 
 (() => {
 
 const InputFileUpload = document.getElementById("file-upload");
-const ImgSource = document.getElementById('source');
 
 const CanvasResult = document.getElementById('result-canvas');
 const ButtonRandom = document.getElementById('random');
@@ -26,16 +24,26 @@ async function onChange() {
         const fileReader = new FileReader();
 
         fileReader.onload = async (event) => {
-            ImgSource.setAttribute('src', event.target.result);
+            let img = new Image();
+            img.src = event.target.result;
+            img.onload = async () => {
+                let ctx = InputCanvas.getContext("2d");
+                let w = InputCanvas.width;
+                let h = InputCanvas.height;
+                
+                ctx.drawImage(img,0,0,w,h);
 
-            let image = await IJS.Image.load(ImgSource.src);
-            GreyImage = image.grey().resize({ width:InputCanvas.width, height: InputCanvas.height});
-        
-            ImgSource.src = GreyImage.toDataURL();
-
-            var rgba = GreyImage.getRGBAData({clamped:true});
-            var idata = new ImageData(rgba, GreyImage.width, GreyImage.height);
-            InputCanvas.getContext("2d").putImageData(idata, 0, 0);
+                let imgData = ctx.getImageData(0,0,w,h);
+                let data = imgData.data;
+                for (var idx = 0; idx < data.length; idx += 4) {
+                    let avg = Math.round((data[idx] + data[idx+1] + data[idx+2]) / 3);
+                    data[idx] = avg;
+                    data[idx+1] = avg;
+                    data[idx+2] = avg;
+                    data[idx+3] = 255;
+                }
+                ctx.putImageData(imgData, 0, 0);
+            }
         };
         
         fileReader.readAsDataURL(file[0]);

@@ -5,8 +5,7 @@
   },
   "dependencies": {
     "bezier-js": "^6.1.4",
-    "genetic-js": "^0.1.14",
-    "image-js": "^0.35.6"
+    "genetic-js": "^0.1.14"
   },
   "scripts": {
     "build": "esbuild src/app.js --bundle --outfile=public/script.js",
