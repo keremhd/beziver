@@ -20,15 +20,15 @@ ButtonRandom.addEventListener("click", onRandom);
 ButtonFit.addEventListener("click", onFit);
 
 
-async function onChange() {
+function onChange() {
     const file = InputFileUpload.files;
     if (file) {
         const fileReader = new FileReader();
 
-        fileReader.onload = async (event) => {
+        fileReader.onload = (event) => {
             let img = new Image();
             img.src = event.target.result;
-            img.onload = async () => {
+            img.onload = () => {
                 let w = InputCtx.canvas.width;
                 let h = InputCtx.canvas.height;
                 
