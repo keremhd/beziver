@@ -73,7 +73,7 @@ let newControlGrid = (N, randomize) => {
     return points;
 }
 
-function drawControlGrid(canvas, controlGrid, $fn) {
+function drawControlGrid(ctx, controlGrid, $fn) {
 
     let drawQuad = (ctx,W,H,p1,p2,p3,p4) => {
         var z = (p1.z + p2.z + p3.z + p4.z) / 4;
@@ -92,55 +92,54 @@ function drawControlGrid(canvas, controlGrid, $fn) {
         ctx.fill();
     }
 
-    var ctx = canvas.getContext("2d");
-    var W = canvas.width;
-    var H = canvas.height;
-    var N = controlGrid.length;
+    let W = ctx.canvas.width;
+    let H = ctx.canvas.height;
+    let N = controlGrid.length;
 
-    var luts = [];
-    for (var j = 0; j < N; j++) {
+    let luts = [];
+    for (let j = 0; j < N; j++) {
         luts[j] = new Bezier(controlGrid[j]).getLUT($fn);
     }
 
-    var pointMap = [];
-    for (var y = 0; y < $fn; y++) {
+    let pointMap = [];
+    for (let y = 0; y < $fn; y++) {
         pointMap[y] = [];
-        for (var x = 0; x < $fn; x++) {
+        for (let x = 0; x < $fn; x++) {
             pointMap[y][x] = null;
         }
     }
 
-    for (var x = 0; x < $fn; x++) {
-        var midPoints = [];
-        for (var j = 0; j < N; j++) {
+    for (let x = 0; x < $fn; x++) {
+        let midPoints = [];
+        for (let j = 0; j < N; j++) {
             midPoints[j] = luts[j][x];
         }
 
-        var midLuts = new Bezier(midPoints).getLUT($fn);
+        let midLuts = new Bezier(midPoints).getLUT($fn);
 
-        for (var y = 0; y < $fn; y++) {
+        for (let y = 0; y < $fn; y++) {
             pointMap[y][x] = midLuts[y];
         }
     }
 
-    for (var x1 = 0; x1 < $fn-1; x1++) {
-        for (var y1 = 0; y1 < $fn-1; y1++) {
-            var x2 = x1+1;
-            var y2 = y1+1;
+    for (let x1 = 0; x1 < $fn-1; x1++) {
+        for (let y1 = 0; y1 < $fn-1; y1++) {
+            let x2 = x1+1;
+            let y2 = y1+1;
 
-            var p11 = pointMap[y1][x1];
-            var p12 = pointMap[y1][x2];
-            var p21 = pointMap[y2][x1];
-            var p22 = pointMap[y2][x2];
+            let p11 = pointMap[y1][x1];
+            let p12 = pointMap[y1][x2];
+            let p21 = pointMap[y2][x1];
+            let p22 = pointMap[y2][x2];
 
             drawQuad(ctx, W, H, p11, p12, p22, p21);
         }
     }
 }
 
-function calculateDistanceCanvas(canvas1, canvas2, numberOfSamples) {
-    var arr1 = canvas2array(canvas1);
-    var arr2 = canvas2array(canvas2);
+function calculateDistanceCanvas(ctx1, ctx2, numberOfSamples) {
+    var arr1 = canvas2array(ctx1);
+    var arr2 = canvas2array(ctx2);
     return calculateDistance(arr1, arr2, numberOfSamples);
 }
 
@@ -161,8 +160,8 @@ function calculateDistance(arr1, arr2, numberOfSamples) {
     return sumError/numberOfSamples;
 }
 
-function canvas2array(canvas) {
-    var imageData = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+function canvas2array(ctx) {
+    var imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
     var arr = []
     let d = imageData.data;
     for (var i = 0; i < imageData.width * imageData.height; i++) {
@@ -175,16 +174,16 @@ function canvas2array(canvas) {
 function onRandom() {
     let w = InputCtx.canvas.width;
     let h = InputCtx.canvas.height;
-    let outputCanvas = new OffscreenCanvas(w, h);
+    let outputCtx = new OffscreenCanvas(w, h).getContext("2d");
     let $fn = 100;
 
     let points = newControlGrid(4, true);
-    drawControlGrid(outputCanvas, points, $fn);
+    drawControlGrid(outputCtx, points, $fn);
 
-    console.log(calculateDistanceCanvas(InputCtx.canvas, outputCanvas, 100));
+    console.log(calculateDistanceCanvas(InputCtx, outputCtx, 100));
 
     InputCtx.clearRect(0,0,w,h);
-    InputCtx.drawImage(outputCanvas, 0, 0);
+    InputCtx.drawImage(outputCtx.canvas, 0, 0);
 }
 
 function onFit() {
@@ -195,7 +194,7 @@ function onFit() {
     genetic.newControlGrid = newControlGrid;
     genetic.drawControlGrid = drawControlGrid;
     genetic.calculateDistance = calculateDistance;
-    genetic.inputArray = canvas2array(InputCtx.canvas);
+    genetic.inputArray = canvas2array(InputCtx);
     genetic.canvas2array = canvas2array;
     
     genetic.seed = () => {
@@ -203,10 +202,10 @@ function onFit() {
     }
 
     genetic.fitness = (grid) => {
-        var canvas = new OffscreenCanvas(this.width, this.height);
-        this.drawControlGrid(canvas, grid, 10);
+        var ctx = new OffscreenCanvas(this.width, this.height).getContext("2d");
+        this.drawControlGrid(ctx, grid, 10);
         
-        return this.calculateDistance(this.inputArray, this.canvas2array(canvas), 1000);
+        return this.calculateDistance(this.inputArray, this.canvas2array(ctx), 1000);
     }
 
     genetic.mutate = (grid) => {
@@ -262,7 +261,7 @@ function onFit() {
             let w = ResultCtx.canvas.width;
             let h = ResultCtx.canvas.height;
             var canvas = new OffscreenCanvas(w, h);
-            drawControlGrid(canvas, pop[0].entity, 20);
+            drawControlGrid(canvas.getContext("2d"), pop[0].entity, 20);
 
             ResultCtx.clearRect(0,0,w,h);
             ResultCtx.drawImage(canvas, 0, 0);
