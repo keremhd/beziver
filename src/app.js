@@ -20,6 +20,7 @@ const ButtonRun = document.getElementById('run');
 InputFileUpload.addEventListener("change", onChange);
 ButtonRun.addEventListener("click", onRun);
 
+var GreyImage = null;
 
 async function onChange() {
     const file = InputFileUpload.files;
@@ -30,9 +31,9 @@ async function onChange() {
             ImgSource.setAttribute('src', event.target.result);
 
             let image = await IJS.Image.load(ImgSource.src);
-            let grey = image.grey().resize({ width:200, height: 200});
+            GreyImage = image.grey().resize({ width:200, height: 200});
         
-            ImgSource.src = grey.toDataURL();
+            ImgSource.src = GreyImage.toDataURL();
         };
         
         fileReader.readAsDataURL(file[0]);
@@ -76,7 +77,10 @@ function drawQuad(ctx,W,H,p1,p2,p3,p4) {
     ctx.fill();
 }
 
-function drawControlGrid(ctx, W, H, controlGrid, $fn) {
+function drawControlGrid(canvas, controlGrid, $fn) {
+    var ctx = canvas.getContext("2d");
+    var W = canvas.width;
+    var H = canvas.height;
     var N = controlGrid.length;
 
     var luts = [];
@@ -120,19 +124,43 @@ function drawControlGrid(ctx, W, H, controlGrid, $fn) {
     }
 }
 
+function calculateDistance(image1, canvas, numberOfSamples) {
+    var image2 = IJS.Image.fromCanvas(canvas);
+
+    var sumError = 0.0;
+    for (var i = 0; i < numberOfSamples; i++) {
+        let x = Math.random();
+        let y = Math.random();
+
+        let v1 = image1.getPixelXY(Math.floor(x * image1.width), Math.floor(y * image1.height))[0];
+        let v2 = image2.getPixelXY(Math.floor(x * image2.width), Math.floor(y * image2.height))[0];
+        sumError += (v1-v2)**2;
+    }
+
+    return sumError/numberOfSamples;
+}
+
 async function onRun() {
+
     var W = 200;
     var H = 200;
+    var canvas = new OffscreenCanvas(W, H);
+    let $fn = 10;
+
+    var points = newControlGrid(4, true);
+    drawControlGrid(canvas, points, $fn);
+
+
+    console.log(calculateDistance(GreyImage, canvas, 1000));
+
+
     CanvasResult.width = W;
     CanvasResult.height = H;
+    CanvasResult
+        .getContext("bitmaprenderer")
+        .transferFromImageBitmap(
+            canvas.transferToImageBitmap());
 
-    var ctx = CanvasResult.getContext("2d");
-
-    var N = 4;
-    var points = newControlGrid(N, true);
-
-    let $fn = 10;
-    drawControlGrid(ctx, W, H, points, $fn);
 }
 
 })();
