@@ -39,74 +39,74 @@ async function onChange() {
     }
 }
 
-async function onRun() {
-    var W = 200;
-    var H = 200;
-    CanvasResult.width = W;
-    CanvasResult.height = H;
+function newPoint(x,y,z) {
+    return { x:x, y:y, z:z };
+}
 
-    var ctx = CanvasResult.getContext("2d");
-    
-    var point = (x,y,z) => {
-        return { x:x, y:y, z:z };
-    }
-
-    var quad = (p1,p2,p3,p4) => {
-        var z = (p1.z + p2.z + p3.z + p4.z) / 4;
-        if (z < 0) z = 0;
-        if (z > 1) z = 1;
-
-        const grayTone = Math.round(z*255);
-        ctx.fillStyle = `rgb(${grayTone} ${grayTone} ${grayTone})`;
-
-        ctx.beginPath();
-        ctx.moveTo(p1.x * W, p1.y * H);
-        ctx.lineTo(p2.x * W, p2.y * H);
-        ctx.lineTo(p3.x * W, p3.y * H);
-        ctx.lineTo(p4.x * W, p4.y * H);
-        ctx.closePath();
-        ctx.fill();
-    }
-
-    var N = 4;
+function newControlGrid(N, randomize) {
     var points = [];
+
     for (var j = 0; j < N; j++) {
         points[j] = [];
         for (var i = 0; i < N; i++) {
-            points[j][i] = point(i/(N-1) + .5-Math.random(), j/(N-1) + .5-Math.random(), Math.random());
+            points[j][i] = newPoint(
+                i/(N-1) + (randomize ? (.5-Math.random()) : 0.0),
+                j/(N-1) + (randomize ? ( .5-Math.random()) : 0.0),
+                (randomize ? Math.random() : 0.0));
         }
     }
+    
+    return points;
+}
 
-    let $FS = 10;
+function drawQuad(ctx,W,H,p1,p2,p3,p4) {
+    var z = (p1.z + p2.z + p3.z + p4.z) / 4;
+    if (z < 0) z = 0;
+    if (z > 1) z = 1;
+
+    const grayTone = Math.round(z*255);
+    ctx.fillStyle = `rgb(${grayTone} ${grayTone} ${grayTone})`;
+
+    ctx.beginPath();
+    ctx.moveTo(p1.x * W - .5, p1.y * H - .5);
+    ctx.lineTo(p2.x * W + .5, p2.y * H - .5);
+    ctx.lineTo(p3.x * W + .5, p3.y * H + .5);
+    ctx.lineTo(p4.x * W - .5, p4.y * H + .5);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawControlGrid(ctx, W, H, controlGrid, $fn) {
+    var N = controlGrid.length;
 
     var luts = [];
     for (var j = 0; j < N; j++) {
-        luts[j] = new Bezier(points[j]).getLUT($FS);
+        luts[j] = new Bezier(controlGrid[j]).getLUT($fn);
     }
 
     var pointMap = [];
-    for (var y = 0; y < $FS; y++) {
+    for (var y = 0; y < $fn; y++) {
         pointMap[y] = [];
-        for (var x = 0; x < $FS; x++) {
+        for (var x = 0; x < $fn; x++) {
             pointMap[y][x] = null;
         }
     }
 
-    for (var x = 0; x < $FS; x++) {
+    for (var x = 0; x < $fn; x++) {
         var midPoints = [];
         for (var j = 0; j < N; j++) {
             midPoints[j] = luts[j][x];
         }
 
-        var midLuts = new Bezier(midPoints).getLUT($FS);
+        var midLuts = new Bezier(midPoints).getLUT($fn);
 
-        for (var y = 0; y < $FS; y++) {
+        for (var y = 0; y < $fn; y++) {
             pointMap[y][x] = midLuts[y];
         }
     }
 
-    for (var x1 = 0; x1 < $FS-1; x1++) {
-        for (var y1 = 0; y1 < $FS-1; y1++) {
+    for (var x1 = 0; x1 < $fn-1; x1++) {
+        for (var y1 = 0; y1 < $fn-1; y1++) {
             var x2 = x1+1;
             var y2 = y1+1;
 
@@ -115,10 +115,24 @@ async function onRun() {
             var p21 = pointMap[y2][x1];
             var p22 = pointMap[y2][x2];
 
-            quad(p11, p12, p22, p21);
+            drawQuad(ctx, W, H, p11, p12, p22, p21);
         }
     }
+}
 
+async function onRun() {
+    var W = 200;
+    var H = 200;
+    CanvasResult.width = W;
+    CanvasResult.height = H;
+
+    var ctx = CanvasResult.getContext("2d");
+
+    var N = 4;
+    var points = newControlGrid(N, true);
+
+    let $fn = 10;
+    drawControlGrid(ctx, W, H, points, $fn);
 }
 
 })();
