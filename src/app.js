@@ -1,5 +1,4 @@
 const Genetic = require('genetic-js');
-import { Bezier } from "bezier-js";
 
 (() => {
 
@@ -75,6 +74,44 @@ let newControlGrid = (N, randomize) => {
 
 function drawControlGrid(ctx, controlGrid, $fn) {
 
+    let bezierPoints = (points, $fn) => {
+        let res = [];
+    
+        for (let i = 0; i < $fn; i++) {
+            res[i] = { x:0, y:0, z:0 };
+        }
+    
+        if (points.length == 4) {
+            for (let i = 0; i < $fn; i++) {
+                let t = i/$fn;
+                let T = 1-t;
+                let p = points;
+    
+                let a = 1*T*T*T;
+                let b = 3*t*T*T;
+                let c = 3*t*t*T;
+                let d = 1*t*t*t;
+    
+                res[i].x = a * p[0].x +
+                           b * p[1].x +
+                           c * p[2].x +
+                           d * p[3].x;
+    
+                res[i].y = a * p[0].y +
+                           b * p[1].y +
+                           c * p[2].y +
+                           d * p[3].y;
+                           
+                res[i].z = a * p[0].z +
+                           b * p[1].z +
+                           c * p[2].z +
+                           d * p[3].z;
+            }
+        }
+    
+        return res;
+    }
+
     let drawQuad = (ctx,W,H,p1,p2,p3,p4) => {
         var z = (p1.z + p2.z + p3.z + p4.z) / 4;
         if (z < 0) z = 0;
@@ -98,7 +135,7 @@ function drawControlGrid(ctx, controlGrid, $fn) {
 
     let luts = [];
     for (let j = 0; j < N; j++) {
-        luts[j] = new Bezier(controlGrid[j]).getLUT($fn);
+        luts[j] =  bezierPoints(controlGrid[j], $fn);
     }
 
     let pointMap = [];
@@ -115,7 +152,7 @@ function drawControlGrid(ctx, controlGrid, $fn) {
             midPoints[j] = luts[j][x];
         }
 
-        let midLuts = new Bezier(midPoints).getLUT($fn);
+        let midLuts = bezierPoints(midPoints, $fn);
 
         for (let y = 0; y < $fn; y++) {
             pointMap[y][x] = midLuts[y];
@@ -257,20 +294,20 @@ function onFit() {
     genetic.notification = (pop, gen, stats, isFinished) => {
         console.log(gen, pop[0].fitness, stats);
         
+        let w = ResultCtx.canvas.width;
+        let h = ResultCtx.canvas.height;
+        var canvas = new OffscreenCanvas(w, h);
+        drawControlGrid(canvas.getContext("2d"), pop[0].entity, 20);
+
+        ResultCtx.clearRect(0,0,w,h);
+        ResultCtx.drawImage(canvas, 0, 0);
+
         if(isFinished) {
-            let w = ResultCtx.canvas.width;
-            let h = ResultCtx.canvas.height;
-            var canvas = new OffscreenCanvas(w, h);
-            drawControlGrid(canvas.getContext("2d"), pop[0].entity, 20);
-
-            ResultCtx.clearRect(0,0,w,h);
-            ResultCtx.drawImage(canvas, 0, 0);
-
             console.log(pop);
         }
     }
 
-    genetic.evolve({webWorkers: false, iterations:100});
+    genetic.evolve({webWorkers: true, iterations:100});
 }
 
 })();
