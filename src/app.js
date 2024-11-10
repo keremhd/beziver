@@ -4,8 +4,14 @@ import { Bezier } from "bezier-js";
 (() => {
 
 const InputFileUpload = document.getElementById("file-upload");
+let InputCtx = document.getElementById('input-canvas').getContext("2d");
+InputCtx.canvas.width = 100;
+InputCtx.canvas.height = 100;
 
-const CanvasResult = document.getElementById('result-canvas');
+let ResultCtx = document.getElementById('result-canvas').getContext("2d");
+ResultCtx.canvas.width = 100;
+ResultCtx.canvas.height = 100;
+
 const ButtonRandom = document.getElementById('random');
 const ButtonFit = document.getElementById('fit');
 
@@ -14,9 +20,6 @@ InputFileUpload.addEventListener("change", onChange);
 ButtonRandom.addEventListener("click", onRandom);
 ButtonFit.addEventListener("click", onFit);
 
-var InputCanvas = document.getElementById('input-canvas');
-InputCanvas.width = 100;
-InputCanvas.height = 100;
 
 async function onChange() {
     const file = InputFileUpload.files;
@@ -27,22 +30,21 @@ async function onChange() {
             let img = new Image();
             img.src = event.target.result;
             img.onload = async () => {
-                let ctx = InputCanvas.getContext("2d");
-                let w = InputCanvas.width;
-                let h = InputCanvas.height;
+                let w = InputCtx.canvas.width;
+                let h = InputCtx.canvas.height;
                 
-                ctx.drawImage(img,0,0,w,h);
+                InputCtx.drawImage(img,0,0,w,h);
 
-                let imgData = ctx.getImageData(0,0,w,h);
+                let imgData = InputCtx.getImageData(0,0,w,h);
                 let data = imgData.data;
-                for (var idx = 0; idx < data.length; idx += 4) {
+                for (let idx = 0; idx < data.length; idx += 4) {
                     let avg = Math.round((data[idx] + data[idx+1] + data[idx+2]) / 3);
                     data[idx] = avg;
                     data[idx+1] = avg;
                     data[idx+2] = avg;
                     data[idx+3] = 255;
                 }
-                ctx.putImageData(imgData, 0, 0);
+                InputCtx.putImageData(imgData, 0, 0);
             }
         };
         
@@ -170,31 +172,30 @@ function canvas2array(canvas) {
     return arr;
 }
 
-async function onRandom() {
-    var W = 100;
-    var H = 100;
-    var outputCanvas = new OffscreenCanvas(W, H);
+function onRandom() {
+    let w = InputCtx.canvas.width;
+    let h = InputCtx.canvas.height;
+    let outputCanvas = new OffscreenCanvas(w, h);
     let $fn = 100;
 
-    var points = newControlGrid(4, true);
+    let points = newControlGrid(4, true);
     drawControlGrid(outputCanvas, points, $fn);
 
-    console.log(calculateDistanceCanvas(InputCanvas, outputCanvas, 100));
+    console.log(calculateDistanceCanvas(InputCtx.canvas, outputCanvas, 100));
 
-    InputCanvas.width = W;
-    InputCanvas.height = H;
-    InputCanvas
-        .getContext("2d")
-        .drawImage(outputCanvas, 0, 0);
+    InputCtx.clearRect(0,0,w,h);
+    InputCtx.drawImage(outputCanvas, 0, 0);
 }
 
-async function onFit() {
-    var genetic = Genetic.create();
+function onFit() {
+    let genetic = Genetic.create();
 
+    genetic.width = InputCtx.canvas.width;
+    genetic.height = InputCtx.canvas.height;
     genetic.newControlGrid = newControlGrid;
     genetic.drawControlGrid = drawControlGrid;
     genetic.calculateDistance = calculateDistance;
-    genetic.inputArray = canvas2array(InputCanvas);
+    genetic.inputArray = canvas2array(InputCtx.canvas);
     genetic.canvas2array = canvas2array;
     
     genetic.seed = () => {
@@ -202,7 +203,7 @@ async function onFit() {
     }
 
     genetic.fitness = (grid) => {
-        var canvas = new OffscreenCanvas(100, 100);
+        var canvas = new OffscreenCanvas(this.width, this.height);
         this.drawControlGrid(canvas, grid, 10);
         
         return this.calculateDistance(this.inputArray, this.canvas2array(canvas), 1000);
@@ -258,12 +259,13 @@ async function onFit() {
         console.log(gen, pop[0].fitness, stats);
         
         if(isFinished) {
-            var canvas = new OffscreenCanvas(100, 100);
+            let w = ResultCtx.canvas.width;
+            let h = ResultCtx.canvas.height;
+            var canvas = new OffscreenCanvas(w, h);
             drawControlGrid(canvas, pop[0].entity, 20);
 
-            let ctx = CanvasResult.getContext("2d");
-            ctx.clearRect(0,0, CanvasResult.width, CanvasResult.height);
-            ctx.drawImage(canvas, 0, 0);
+            ResultCtx.clearRect(0,0,w,h);
+            ResultCtx.drawImage(canvas, 0, 0);
 
             console.log(pop);
         }
