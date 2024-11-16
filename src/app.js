@@ -11,6 +11,8 @@ let ResultCtx = document.getElementById('result-canvas').getContext("2d");
 ResultCtx.canvas.width = 100;
 ResultCtx.canvas.height = 100;
 
+let ResultOpenscad = document.getElementById('result-openscad');
+
 const ButtonRandom = document.getElementById('random');
 const ButtonFit = document.getElementById('fit');
 const ButtonContour = document.getElementById('contour');
@@ -392,7 +394,12 @@ function calculateDistance2(arr1, controlGrid, $fn) {
                 let yy = Math.floor(p.y * H);
                 let xx = Math.floor(p.x * W);
 
-                let err = arr1[yy*W+xx] - p.z*255;
+
+                let err;
+                if (arr1[yy*W+xx] == 0 || arr1[yy*W+xx] == 255)
+                    err = 255;
+                else
+                    err = arr1[yy*W+xx] - p.z*255;
                 sumError += err**2;
 
                 let outXX = 0;
@@ -447,6 +454,31 @@ function onRandom() {
 
     InputCtx.clearRect(0,0,w,h);
     InputCtx.drawImage(outputCtx.canvas, 0, 0);
+}
+
+function gridToCode(grid) {
+    let patch = "";
+    for (let j = 0; j < grid.length; j++) {
+        let patchLine = "    [";
+
+        for (let i = 0; i < grid[j].length; i++) {
+            let p = grid[j][i];
+            let comma = i == grid[j].length-1 ? "" : ", "
+            patchLine += `[${p.x},${p.y},${p.z}]${comma}`;
+        }
+        patchLine += "],\n";
+        patch += patchLine;
+    }
+
+    let code = `
+include <BOSL2/std.scad>
+include <BOSL2/beziers.scad>
+patch1 = [
+${patch}];
+debug_bezier_patches(patches=[patch1], splinesteps=8, showcps=true);
+
+`;
+    ResultOpenscad.textContent = code;
 }
 
 function onFit() {
@@ -557,10 +589,11 @@ function onFit() {
 
         if(isFinished) {
             console.log(pop);
+            gridToCode(pop[0].entity);
         }
     }
 
-    genetic.evolve({webWorkers: true, iterations:1000});
+    genetic.evolve({webWorkers: true, iterations:100});
 }
 
 })();
