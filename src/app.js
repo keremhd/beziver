@@ -8,7 +8,7 @@ const SAMPLE = require('./sample.js');
 // Bumped whenever index.html and this file must ship together; the page
 // checks it so a stale bundle announces itself instead of silently doing
 // nothing. Keep in sync with window.BEZIVER_BUILD in index.html.
-const BUILD = 19;
+const BUILD = 20;
 
 // The text analyses under Diagnostics were written for the rewrite, not for a
 // person using the tool: they caught the folds, the oscillating control net
@@ -133,12 +133,20 @@ let ErrField = null;   // { err: Float64Array, scale: number }
 const PREVIEW_MIN = 192;
 const PREVIEW_MAX = 1200;      // a maximised 4K window must not ask for 4000px
 const PREVIEW_DRAG = 384;      // ... and a drag frame must not ask for 1024
+// A phone reports devicePixelRatio 3 or more. Honouring it edge to edge in the
+// single-column layout asks for a ~1100px raster per pane -- 8x the fill work
+// of the same page in a desktop-width column, on a CPU several times slower,
+// in one synchronous block that a mobile browser is entitled to kill for
+// running too long. Two device pixels per CSS pixel is past the point where
+// more of them are visible on a screen held at arm's length.
+const DPR_MAX = 2;
 
 let Dragging = false;
 
 function previewSize(id) {
     const c = el(id);
-    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    const dpr = Math.min(DPR_MAX,
+        (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
     // clientWidth is 0 before layout and undefined outside a browser.
     const css = c.clientWidth || c.clientHeight || 256;
     const n = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, Math.round(css * dpr)));
@@ -529,7 +537,7 @@ installReset('reset-view', () => {
 // the reset undone by a stray drag, or the model tipping while the cut-off is
 // dragged.
 function blockDrag(node) {
-    for (const ev of ['mousedown', 'mousemove', 'mouseup']) {
+    for (const ev of ['pointerdown', 'pointermove', 'pointerup']) {
         node.addEventListener(ev, (e) => { if (e && e.stopPropagation) e.stopPropagation(); });
     }
 }
@@ -1401,21 +1409,45 @@ function installOrbit() {
     const left = el('stl-canvas'), right = el('warp-canvas');
     if (!left || !left.addEventListener || !right || !right.addEventListener ||
         typeof window === 'undefined' || !window.addEventListener) return;
-    let target = null, lx = 0, ly = 0;
-    const grab = (which) => (e) => {
-        target = which; lx = e.clientX; ly = e.clientY;
-        Dragging = true;
-    };
-    left.addEventListener('mousedown', grab('object'));
-    right.addEventListener('mousedown', grab('camera'));
-    window.addEventListener('mouseup', () => {
-        target = null;
+    // Pointer events, not mouse events: a finger raises no mousedown/mousemove
+    // pair on any current mobile browser, so a mouse-only orbit is not a
+    // degraded rotation on a phone, it is no rotation at all -- the drag falls
+    // through to the page and scrolls it. `touch-action: none` on .preview is
+    // the other half: without it the browser claims the gesture as a scroll
+    // before the second pointermove ever arrives.
+    let target = null, id = null, lx = 0, ly = 0;
+    const release = () => {
+        target = null; id = null;
         if (!Dragging) return;
         Dragging = false;
         redrawPreviews();      // the settled frame, at full resolution
-    });
-    window.addEventListener('mousemove', (e) => {
+    };
+    const grab = (which) => (e) => {
+        // A second finger means the pinch in installZoom() owns the gesture:
+        // one finger cannot both rotate and zoom, and rotating off one of the
+        // two pinch fingers spins the model while it scales. isPrimary is the
+        // browser's own answer to "is this the finger that started this
+        // gesture", which beats counting pointers ourselves -- a single
+        // pointerup lost to a backgrounded tab would leave a count that never
+        // came down and a pane that never rotated again.
+        if (e.pointerType === 'touch' && e.isPrimary === false) { release(); return; }
+        target = which; id = e.pointerId; lx = e.clientX; ly = e.clientY;
+        Dragging = true;
+    };
+    left.addEventListener('pointerdown', grab('object'));
+    right.addEventListener('pointerdown', grab('camera'));
+    const up = (e) => {
+        if (e && id !== null && e.pointerId !== undefined && e.pointerId !== id) return;
+        release();
+    };
+    window.addEventListener('pointerup', up);
+    // A touch drag that leaves the canvas, or that the browser takes over,
+    // ends as a cancel and never as an up. Without this the pane stays stuck
+    // in its low-resolution drag frame.
+    window.addEventListener('pointercancel', up);
+    window.addEventListener('pointermove', (e) => {
         if (!target || !Mesh) return;
+        if (id !== null && e.pointerId !== undefined && e.pointerId !== id) return;
         const dx = e.clientX - lx, dy = e.clientY - ly;
         lx = e.clientX; ly = e.clientY;
         dragBy(target, dx, dy);

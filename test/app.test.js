@@ -283,11 +283,20 @@ const differing = (a, b) => {
     for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i+1] !== b[i+1] || a[i+2] !== b[i+2]) n++;
     return n;
 };
-// A drag is mousedown on one canvas, a window mousemove, a window mouseup.
+// A drag is pointerdown on one canvas, a window pointermove, a window
+// pointerup -- pointer events, so one code path serves mouse and finger.
 const drag = (id, dx, dy) => {
-    fire(id, 'mousedown', { clientX: 100, clientY: 100 });
-    fireWin('mousemove', { clientX: 100 + dx, clientY: 100 + dy });
-    fireWin('mouseup', {});
+    fire(id, 'pointerdown', { clientX: 100, clientY: 100 });
+    fireWin('pointermove', { clientX: 100 + dx, clientY: 100 + dy });
+    fireWin('pointerup', {});
+};
+// The same drag as a finger makes it, which is the only kind a phone sends.
+const touchDrag = (id, dx, dy) => {
+    const p = (x, y) => ({ pointerType: 'touch', pointerId: 7, isPrimary: true,
+                           clientX: x, clientY: y, preventDefault: () => {} });
+    fire(id, 'pointerdown', p(100, 100));
+    fireWin('pointermove', p(100 + dx, 100 + dy));
+    fireWin('pointerup', p(100 + dx, 100 + dy));
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The three rotations are internal, and the assertions that matter are about
@@ -589,7 +598,7 @@ try {
 
     // A click on a button must not also grab the canvas under it.
     const parked = pixels('stl-canvas').slice();
-    fireWin('mousemove', { clientX: 400, clientY: 400 });
+    fireWin('pointermove', { clientX: 400, clientY: 400 });
     check('clicking a reset left no drag in progress',
         differing(parked, pixels('stl-canvas')) === 0 &&
         same(rot().CamM, [1, 0, 0, 0, 1, 0, 0, 0, 1]));
@@ -666,8 +675,8 @@ try {
 
     // Touch pinch: two live pointers and the ratio of their separation.
     const pointer = (id, ev, pid, x, y) =>
-        fire(id, ev, { pointerType: 'touch', pointerId: pid, clientX: x, clientY: y,
-                       preventDefault: () => {} });
+        fire(id, ev, { pointerType: 'touch', pointerId: pid, isPrimary: pid === 1,
+                       clientX: x, clientY: y, preventDefault: () => {} });
     const z3 = rot().zoom;
     pointer('warp-canvas', 'pointerdown', 1, 100, 100);
     pointer('warp-canvas', 'pointerdown', 2, 140, 100);
@@ -843,11 +852,11 @@ try {
 
     // Progressive refinement: the drag frame is cheap, the frame you stop on is
     // sharp. Rendering every drag frame at 1024 is ~15x the fill work of 256.
-    fire('stl-canvas', 'mousedown', { clientX: 100, clientY: 100 });
-    fireWin('mousemove', { clientX: 128, clientY: 112 });
+    fire('stl-canvas', 'pointerdown', { clientX: 100, clientY: 100 });
+    fireWin('pointermove', { clientX: 128, clientY: 112 });
     const during = L.width;
     const t0 = Date.now();
-    fireWin('mouseup', {});
+    fireWin('pointerup', {});
     const settleMs = Date.now() - t0;
     const after = L.width;
     check('a drag frame renders at a reduced scale', during <= 384 && during < after,
@@ -864,6 +873,17 @@ try {
     check('and it is capped, so a maximised 4K window cannot ask for 8000 px',
         L.width === 1200, L.width + ' px');
 
+    // A phone in the single-column layout: a full-width pane at devicePixelRatio
+    // 3. Honouring that literally is ~8x the fill of the same page on a desktop
+    // and it lands in one synchronous block on a slower CPU. Two device pixels
+    // per CSS pixel is the cap.
+    setBox(380);
+    globalThis.devicePixelRatio = 3;
+    fireWin('resize');
+    await sleep(300);
+    check('a phone at 3x renders at 2x, not 3x', L.width === 760,
+        L.width + ' px for 380 css @3x');
+
     // Back to something quick for the rest of the suite.
     setBox(240);
     globalThis.devicePixelRatio = dprWas;
@@ -874,6 +894,46 @@ try {
 } catch (e) {
     fail++;
     console.log('  FAIL resolution threw: ' + e.message);
+    console.log(e.stack.split('\n').slice(1, 4).join('\n'));
+}
+
+console.log('\nA finger drags the same as a mouse');
+try {
+    // The panes were mouse-only until FF/Android showed what that means: a
+    // finger raises no mouse events at all, so the drag fell through to the
+    // page and scrolled it. There was no rotation on any phone.
+    const camPre = rot().CamM, objPre = rot().ObjM;
+    touchDrag('warp-canvas', 40, 0);
+    check('a one-finger drag on the right pane turns the camera',
+        !same(rot().CamM, camPre) && same(rot().ObjM, objPre));
+    const camMid = rot().CamM;
+    touchDrag('stl-canvas', 0, 30);
+    check('and on the left pane it tips the model, not the camera',
+        !same(rot().ObjM, objPre) && same(rot().CamM, camMid));
+    check('the pane tells the browser every drag on it is ours, not a scroll',
+        /\.preview \{[^}]*touch-action: none/.test(html));
+
+    // Two fingers are a pinch. Rotating off one of them spins the model while
+    // it scales.
+    const camPinch = rot().CamM, objPinch = rot().ObjM;
+    const two = (ev, pid, x, y) =>
+        fire('warp-canvas', ev, { pointerType: 'touch', pointerId: pid,
+                                  isPrimary: pid === 11, clientX: x, clientY: y,
+                                  preventDefault: () => {} });
+    two('pointerdown', 11, 100, 100);
+    two('pointerdown', 12, 140, 100);
+    fireWin('pointermove', { pointerType: 'touch', pointerId: 12, isPrimary: false,
+                             clientX: 260, clientY: 180, preventDefault: () => {} });
+    check('a second finger hands the gesture to the pinch and stops rotating',
+        same(rot().CamM, camPinch) && same(rot().ObjM, objPinch));
+    fireWin('pointerup', { pointerType: 'touch', pointerId: 11, clientX: 100, clientY: 100 });
+    fireWin('pointerup', { pointerType: 'touch', pointerId: 12, clientX: 260, clientY: 180 });
+    clickIt('reset-view');
+    clickIt('reset-object');
+    await sleep(900);
+} catch (e) {
+    fail++;
+    console.log('  FAIL touch drag threw: ' + e.message);
     console.log(e.stack.split('\n').slice(1, 4).join('\n'));
 }
 
@@ -913,9 +973,9 @@ try {
     // On a drag surface, so a press must not also start an orbit.
     const camPre = rot().CamM, objPre = rot().ObjM;
     let stopped = false;
-    fire('show-errors', 'mousedown', { stopPropagation() { stopped = true; }, clientX: 20, clientY: 20 });
-    fireWin('mousemove', { clientX: 90, clientY: 60 });
-    fireWin('mouseup', {});
+    fire('show-errors', 'pointerdown', { stopPropagation() { stopped = true; }, clientX: 20, clientY: 20 });
+    fireWin('pointermove', { clientX: 90, clientY: 60 });
+    fireWin('pointerup', {});
     check('pressing one never starts a rotation',
         stopped && same(rot().CamM, camPre) && same(rot().ObjM, objPre));
     await sleep(600);
@@ -1053,7 +1113,7 @@ try {
         html.indexOf('id="err-water"') > html.indexOf('id="stl-canvas"') &&
         html.indexOf('id="err-water"') < html.indexOf('id="stl-info"'));
     check('no hand-rolled slider: the app never listens for a drag on it',
-        !/stl-water'\).addEventListener\('mousedown'/.test(appSrc));
+        !/stl-water'\).addEventListener\('(mouse|pointer)down'/.test(appSrc));
     // 'input' is the event a keyboard arrow raises as well as a drag, so
     // driving the pipeline off it is what makes the keyboard work at all.
     check('it is driven from input, which is what arrow keys fire',

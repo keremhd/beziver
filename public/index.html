@@ -8,7 +8,7 @@
     // but wires up nothing -- every control silently dead. Rather than leave
     // that to guesswork, the page states which build it expects and complains
     // if the script never initialises or reports a different one.
-    window.BEZIVER_BUILD = 19;
+    window.BEZIVER_BUILD = 20;
     (function () {
         function show(msg) {
             var e = document.getElementById('boot-error');
@@ -17,10 +17,35 @@
             e.textContent = msg;
         }
         window.__beziverBootError = show;
+        var loaded = false;
+        window.addEventListener('load', function () { loaded = true; });
         window.addEventListener('error', function (ev) {
-            show('This page failed to load, so no control on it will ' +
-                 'respond: ' + (ev.message || ev) + '. Reload to try again.');
-        });
+            // Two different faults arrive here and they are not the same news.
+            // Before load, the script never ran and nothing on the page works.
+            // After it, the page is up and one action failed -- saying "failed
+            // to load" there sends the reader to reload a page that loaded.
+            var where = ev.filename
+                ? ' (' + String(ev.filename).replace(/^.*\//, '') + ':' +
+                  ev.lineno + ':' + ev.colno + ')'
+                : '';
+            // A cross-origin script, or one the browser killed for running too
+            // long, is reported with the details stripped: the bare string
+            // "Script error." and no file or line. Saying so beats printing it
+            // and leaving the reader to guess what it means.
+            var what = ev.message
+                ? (/^Script error\.?$/.test(ev.message) && !ev.filename
+                    ? 'the browser stopped the script without saying why, ' +
+                      'which usually means it was taking too long'
+                    : ev.message + where)
+                : ev.target && ev.target.src
+                    ? 'could not fetch ' + ev.target.src
+                    : String(ev.type || ev);
+            show(loaded
+                ? 'Something went wrong: ' + what + '. The page is still ' +
+                  'here; reload if it stops responding.'
+                : 'This page failed to load, so no control on it will ' +
+                  'respond: ' + what + '. Reload to try again.');
+        }, true);
         window.addEventListener('load', function () {
             setTimeout(function () {
                 if (window.BEZIVER_READY === window.BEZIVER_BUILD) return;
@@ -73,7 +98,12 @@
         .preview { width: 100%; aspect-ratio: 1 / 1; display: block; background: #2a2a2a;
                    border: 1px solid var(--line); border-radius: 6px;
                    image-rendering: auto; }
-        .preview { cursor: grab; }        /* both panes are draggable */
+        /* Both panes are draggable, by mouse and by finger. touch-action: none
+           is what makes the finger half real: the default is that the browser
+           watches the first few pixels of a touch drag and, if it looks like a
+           scroll, takes the gesture away and stops sending pointermove. Every
+           drag over a pane is a rotation, so none of them is ever a scroll. */
+        .preview { cursor: grab; touch-action: none; }
         .preview:active { cursor: grabbing; }
         /* Each reset sits inside the canvas whose drag it undoes, so there is
            never a question of which pane a button belongs to. Quiet until
