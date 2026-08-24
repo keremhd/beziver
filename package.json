@@ -1,4 +1,5 @@
 {
+  "license": "Unlicense",
   "devDependencies": {
     "esbuild": "0.24.0",
     "http-server": "^14.1.1"
