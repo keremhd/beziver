@@ -1,27 +1,305 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <script src="script.js" defer></script>
-    </head>
-    <body>
-        <h2>Input</h2>
-        Pick heightmap:
-        <input type="file" accept="image/*" id="file-upload"><br/>
-        <button id="random">Random</button>
+<head>
+    <meta charset="utf-8">
+    <title>beziver</title>
+    <script>
+    // Build handshake. A stale cached script.js renders a page that looks fine
+    // but wires up nothing -- every control silently dead. Rather than leave
+    // that to guesswork, the page states which build it expects and complains
+    // if the script never initialises or reports a different one.
+    window.BEZIVER_BUILD = 19;
+    (function () {
+        function show(msg) {
+            var e = document.getElementById('boot-error');
+            if (!e) return;
+            e.className = 'boot';
+            e.textContent = msg;
+        }
+        window.__beziverBootError = show;
+        window.addEventListener('error', function (ev) {
+            show('This page failed to load, so no control on it will ' +
+                 'respond: ' + (ev.message || ev) + '. Reload to try again.');
+        });
+        window.addEventListener('load', function () {
+            setTimeout(function () {
+                if (window.BEZIVER_READY === window.BEZIVER_BUILD) return;
+                show(window.BEZIVER_READY === undefined
+                    ? 'This page did not finish loading. Reload with Shift held ' +
+                      'to clear an out-of-date copy.'
+                    : 'This page is running an out-of-date copy of itself. ' +
+                      'Reload with Shift held.');
+            }, 400);
+        });
+    })();
+    </script>
+    <script src="script.js" defer></script>
+    <style>
+        :root { --line: #dcdcdc; --muted: #6b6b6b; --bg: #f6f6f6; --accent: #1b1b1b; }
+        body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0 auto; padding: 22px 24px 80px;
+               max-width: 1120px; color: #1b1b1b; }
+        h1 { font-size: 17px; letter-spacing: .1em; text-transform: uppercase; margin: 0 0 6px; }
+        .lede { font-size: 14px; color: var(--muted); margin: 0 0 22px; }
 
-        <div>
-            <canvas id="input-canvas"></canvas>
+        .hidden { display: none !important; }
+        .boot { background: #b3261e; color: #fff; padding: 11px 14px; border-radius: 6px;
+                font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
+
+        /* ------------------------------------------------------- drop zone */
+        #drop-zone { border: 2px dashed var(--line); border-radius: 10px; background: var(--bg);
+                     padding: 54px 20px; text-align: center; cursor: pointer; transition: .12s; }
+        #drop-zone.over { border-color: var(--accent); background: #ececec; }
+        #drop-zone.compact { padding: 10px 14px; text-align: left; font-size: 13px;
+                             border-style: solid; }
+        #drop-text { font-size: 19px; font-weight: 600; display: block; }
+        #drop-zone.compact #drop-text { font-size: 13px; font-weight: 600; }
+        #drop-sub { font-size: 13px; color: var(--muted); display: block; margin-top: 6px; }
+        #drop-zone.compact #drop-sub { display: inline; margin: 0 0 0 10px; }
+        #stl-upload { display: block; margin: 14px auto 0; font-size: 13px; }
+        #drop-zone.compact #stl-upload { display: inline-block; margin: 0 0 0 12px; }
+        /* The page is useless until you happen to have a scan to hand. */
+        #sample-load { margin-top: 16px; font-size: 13px; }
+        #drop-zone.compact #sample-load { margin: 0 0 0 12px; }
+
+        /* ----------------------------------------------------------- panes */
+        #workspace { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 18px; }
+        @media (max-width: 860px) { #workspace { grid-template-columns: 1fr; } }
+        .pane h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+                   color: var(--muted); margin: 0 0 8px; }
+        /* Explicitly auto: the generic `canvas` rule below sets `pixelated`,
+           which is right for the small upscaled diagnostic images and wrong
+           here now that the backing store is sized to the displayed box times
+           devicePixelRatio. There is no upscale left to make the best of. */
+        .preview { width: 100%; aspect-ratio: 1 / 1; display: block; background: #2a2a2a;
+                   border: 1px solid var(--line); border-radius: 6px;
+                   image-rendering: auto; }
+        .preview { cursor: grab; }        /* both panes are draggable */
+        .preview:active { cursor: grabbing; }
+        /* Each reset sits inside the canvas whose drag it undoes, so there is
+           never a question of which pane a button belongs to. Quiet until
+           hovered: it is on top of a 3D view and must not compete with it. */
+        .stage { position: relative; margin-bottom: 12px; }
+        .stage button { position: absolute; font-size: 11px;
+                        padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,.14);
+                        border: 1px solid rgba(255,255,255,.22); color: rgba(255,255,255,.62);
+                        opacity: .75; transition: .12s; }
+        .stage button:hover { background: rgba(255,255,255,.9); color: #1b1b1b;
+                              border-color: rgba(255,255,255,.9); opacity: 1; }
+        #reset-object, #reset-view { top: 8px; right: 8px; }
+        /* The two view toggles share one strip along the top-left, clear of
+           the reset button and the colour bar. Side by side rather than
+           stacked: they are two options of one kind, and a column of them read
+           as a menu growing down the picture. The strip is positioned, not the
+           buttons, so neither has to know how wide the other's label is.
+           Selected reads as filled blue, the same signal in both. */
+        .toggles { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; }
+        .stage .toggles button { position: static; }
+        .stage .toggle.on { background: #2563eb; border-color: #2563eb;
+                            color: #fff; opacity: 1; }
+        .stage .toggle.on:hover { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+        .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+        .slider { display: block; margin: 12px 0 4px; }
+        .slider input[type=range] { width: 100%; display: block; margin-top: 4px; }
+        .slider > span { font-size: 12px; color: var(--muted); }
+
+        /* The cut-off lives on the canvas, along the edge the plane travels
+           along: drag up, the water rises. writing-mode + direction:rtl is what
+           puts the maximum at the TOP; appearance:slider-vertical is the older
+           WebKit spelling of the same thing. */
+        #stl-water { position: absolute; right: 9px; top: 46px; bottom: 12px;
+                     width: 26px; margin: 0; padding: 7px 0; cursor: pointer;
+                     writing-mode: vertical-lr; direction: rtl;
+                     -webkit-appearance: slider-vertical; appearance: slider-vertical;
+                     accent-color: #eef1f5; background: rgba(18,20,24,.34);
+                     border-radius: 13px; }
+        /* The figure is precise on demand, not permanent furniture: it appears
+           beside the thumb while the slider is being used and fades when idle. */
+        #water-info { position: absolute; right: 42px; font-size: 12px;
+                      font-weight: 600; color: #fff; background: rgba(18,20,24,.82);
+                      padding: 3px 8px; border-radius: 4px; white-space: nowrap;
+                      opacity: 0; transition: opacity .18s; pointer-events: none; }
+        #water-info.show { opacity: 1; }
+        /* The colour bar mirrors the cut-off slider's placement in the other
+           pane, so the two canvases read as a matched pair. The strip is a
+           canvas painted from diverging() itself; only the numbers are DOM, so
+           they stay crisp while the preview stays pixelated. */
+        #cmap-bar { position: absolute; right: 9px; top: 46px; width: 12px;
+                    height: 160px; pointer-events: none; }
+        #cmap-bar canvas { width: 12px; height: 160px; border: 0;
+                           border-radius: 2px; image-rendering: auto;
+                           box-shadow: 0 0 0 1px rgba(0,0,0,.28); }
+        #cmap-bar span { position: absolute; right: 17px; font-size: 10.5px;
+                         font-weight: 600; color: #fff; white-space: nowrap;
+                         background: rgba(18,20,24,.82); padding: 1px 5px;
+                         border-radius: 3px; }
+        #cmap-hi { top: -7px; }
+        #cmap-mid { top: 73px; }
+        #cmap-lo { top: 153px; }
+
+        .stage #err-water { position: absolute; left: 10px; right: 44px; bottom: 10px;
+                            margin: 0; background: #b3261e; color: #fff; font-size: 12px;
+                            padding: 5px 9px; border-radius: 4px; }
+        .check { display: flex; gap: 7px; align-items: center; font-size: 12.5px;
+                 color: var(--muted); margin: 12px 0 0; }
+
+
+        button { font-size: 13px; padding: 6px 12px; cursor: pointer; border-radius: 5px;
+                 border: 1px solid var(--line); background: #fff; }
+        button.primary { font-weight: 600; background: var(--accent); color: #fff;
+                         border-color: var(--accent); font-size: 14px; padding: 9px 18px; }
+        button:disabled { opacity: .45; cursor: default; }
+
+        .err { font-size: 12.5px; color: #b3261e; margin: 6px 0 0; }
+        .note { font-size: 12px; color: var(--muted); }
+        #fallback-note { font-size: 12.5px; color: #8a5a00; margin: 8px 0 0; }
+        #copy-note { font-size: 12.5px; color: #1a7f37; }
+        #status { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+        .sizes { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+        .sizes label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 3px; }
+        .sizes input { font-size: 13px; padding: 3px 5px; width: 78px; }
+
+        details { border: 1px solid var(--line); border-radius: 6px; margin: 16px 0 0; }
+        details[open] > summary { border-bottom: 1px solid var(--line); }
+        summary { cursor: pointer; padding: 9px 12px; font-size: 13px; font-weight: 600;
+                  letter-spacing: .04em; text-transform: uppercase; }
+        summary span.sub { font-weight: 400; text-transform: none; letter-spacing: 0;
+                           color: var(--muted); margin-left: 8px; font-size: 12px; }
+        .body { padding: 12px; }
+        #diagnostics { margin-top: 40px; }
+
+        h3 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+             margin: 22px 0 8px; }
+        h3:first-child { margin-top: 0; }
+        .controls { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end;
+                    background: var(--bg); padding: 11px 12px; border-radius: 6px; }
+        .controls label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 3px; }
+        .controls input, .controls select { font-size: 13px; padding: 3px 5px; }
+        .controls input[type=number] { width: 84px; }
+
+        canvas { image-rendering: pixelated; border: 1px solid var(--line); background: #fafafa; }
+        .canvases { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+        .cv { display: flex; flex-direction: column; gap: 4px; }
+        .cv > span { font-size: 11px; color: var(--muted); }
+        .cv canvas { width: 220px; height: auto; }
+
+        /* The text analyses were written for the rewrite, not for a reader.
+           They stay reachable at ?debug=1; the pictures are always shown. */
+        #diagnostics .debug-only { display: none; }
+        #diagnostics.debug .debug-only { display: revert; }
+
+        pre.report { background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px;
+                     font-size: 12px; line-height: 1.55; overflow-x: auto; margin: 12px 0 0; }
+        textarea { width: 100%; height: 190px; font-family: ui-monospace, monospace; font-size: 11px;
+                   margin-top: 10px; border: 1px solid var(--line); border-radius: 5px; padding: 8px; }
+    </style>
+</head>
+<body>
+
+<div id="boot-error" class="boot hidden"></div>
+
+<h1>beziver</h1>
+<p class="lede">Fits a smooth Bézier surface to an STL and emits it as OpenSCAD.</p>
+
+<div id="drop-zone">
+    <span id="drop-text">Drop an STL here</span>
+    <span id="drop-sub">or choose a file</span>
+    <input type="file" accept=".stl" id="stl-upload">
+    <button id="sample-load" type="button">Try a sample model</button>
+</div>
+
+<div id="workspace" class="hidden">
+
+    <div class="pane">
+        <h2>1. Orientation and cut-off</h2>
+        <div class="stage">
+            <canvas id="stl-canvas" class="preview" tabindex="0" role="img"
+                    aria-label="Your model standing in the cut-off plane. Drag to tip the model; the cut-off stays level and anything below it is discarded."
+                    title="Drag to tip the model"></canvas>
+            <button id="reset-object" title="Put the model back to the orientation and cut-off it was loaded with">Reset model</button>
+            <input type="range" id="stl-water" min="0" max="1000" value="0" step="1"
+                   aria-label="Cut-off height" title="Cut-off height">
+            <div id="water-info">Keeps the whole model</div>
+            <p class="err hidden" id="err-water"></p>
+        </div>
+        <p class="note" id="stl-info"></p>
+    </div>
+
+    <div class="pane">
+        <h2>2. Fitted surface</h2>
+        <div class="stage">
+            <canvas id="warp-canvas" class="preview" tabindex="0" role="img"
+                    aria-label="The fitted surface, seen from the same camera as your model. Drag to rotate the view of both panes; this does not change the result."
+                    title="Drag to rotate the view of both panes"></canvas>
+            <button id="reset-view" title="Look straight down again">Reset view</button>
+            <div class="toggles">
+                <button id="show-grid" class="toggle on" aria-pressed="true"
+                        title="Draw the control net on the surface">Show control grid</button>
+                <button id="show-errors" class="toggle" aria-pressed="false"
+                        title="Colour the surface by how far it is from your model">Show deviation</button>
+            </div>
+            <div id="cmap-bar" class="hidden">
+                <canvas id="cmap-canvas" width="12" height="160"></canvas>
+                <span id="cmap-hi"></span><span id="cmap-mid">0</span><span id="cmap-lo"></span>
+            </div>
+        </div>
+        <label class="slider">
+            <span>Smoother &larr;&rarr; more detail</span>
+            <input type="range" id="detail" min="1" max="8" value="5" step="1">
+        </label>
+        <p class="note" id="detail-info"></p>
+        <p class="note" id="cmap-legend"></p>
+        <div class="sizes">
+            <label>Width (mm)<input type="number" id="size-x" value="100" step="1"></label>
+            <label>Depth (mm)<input type="number" id="size-y" value="100" step="1"></label>
+            <label>Height (mm)<input type="number" id="size-height" value="20" step="0.1"></label>
+        </div>
+        <p class="note" id="size-src"></p>
+        <p id="fallback-note" class="hidden"></p>
+        <div class="row" style="margin-top:14px">
+            <button id="copy-scad" class="primary">Copy OpenSCAD code</button>
+            <button id="download-scad">Download .scad</button>
+            <span id="copy-note"></span>
+        </div>
+        <details>
+            <summary>View code</summary>
+            <div class="body">
+                <textarea id="scad-out" spellcheck="false"
+                          placeholder="OpenSCAD output"></textarea>
+            </div>
+        </details>
+        <p class="err hidden" id="err-out"></p>
+        <div id="status"></div>
+    </div>
+
+</div>
+
+<details id="diagnostics">
+    <summary>Inside the fit <span class="sub">the height field, the traced outline, and the surface it produced</span></summary>
+    <div class="body">
+
+        <h3>Input</h3>
+        <div class="canvases">
+            <div class="cv"><span>height field</span><canvas id="input-canvas"></canvas></div>
+            <div class="cv"><span>mask + traced outline</span><canvas id="mask-canvas"></canvas></div>
         </div>
 
-        <h2>Output</h2>
-        
-        <div>
-            <canvas id="result-canvas"></canvas>
-            <textarea id="result-openscad"></textarea>
+        <h3>Rectangular fit <span class="sub debug-only" id="sub-fit"></span></h3>
+        <div class="canvases">
+            <div class="cv"><span>fitted surface</span><canvas id="result-canvas"></canvas></div>
         </div>
-        
-        <button id="contour">Find contour</button>
-        <button id="fit">Fit</button>
+        <pre class="report debug-only" id="report-fit">not run yet</pre>
+        <textarea class="debug-only" id="scad-fit" spellcheck="false" placeholder="OpenSCAD for the rectangular fit"></textarea>
 
-    </body>
+        <h3>Outline patch <span class="sub debug-only" id="sub-warp"></span></h3>
+        <div class="canvases">
+            <div class="cv"><span>domain map (parameter grid + corners)</span><canvas id="domain-canvas"></canvas></div>
+        </div>
+        <pre class="report debug-only" id="report-warp">not run yet</pre>
+        <textarea class="debug-only" id="scad-warp" spellcheck="false" placeholder="OpenSCAD for the outline patch"></textarea>
+
+    </div>
+</details>
+
+</body>
 </html>
