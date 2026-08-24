@@ -27,8 +27,8 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - run: npm run build     # app.test.js loads the BUNDLE, so build first
       - run: npm test          # 4 suites, no browser needed; gates the deploy
-      - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

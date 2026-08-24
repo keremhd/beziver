@@ -9,6 +9,7 @@
     "watch": "esbuild src/app.js --bundle --outfile=public/script.js --watch",
     "serve": "esbuild src/app.js --sourcemap=inline --bundle --outfile=public/script.js --servedir=public/",
     "run": "npx http-server public -c-1 -o",
+    "pretest": "npm run build",
     "test": "node test/fit.test.js && node test/warp.test.js && node test/stl.test.js && node test/app.test.js",
     "verify:scad": "node test/scad-render.js",
     "dev": "npm run build && npm run run"
