@@ -1531,6 +1531,7 @@ try {
 }
 
 console.log('\nRedraws are sliced across frames');
+const REAL_PERFORMANCE = globalThis.performance;
 try {
     // With frames to wait for, a drag must not draw on the spot: the work is
     // what a browser stops the script for.
@@ -1550,18 +1551,40 @@ try {
     check('and a second move joins that frame rather than queueing another',
         frames.length === 1, frames.length + ' frames');
 
-    frames.shift()();
-    check('running the frame is what reaches the canvas', ctx.blits > before,
+    const drain = () => {
+        let ran = 0;
+        while (frames.length && ctx.blits === before && ran < 500) { ran++; frames.shift()(); }
+        return ran;
+    };
+    check('running the frames is what reaches the canvas', drain() && ctx.blits > before,
         ctx.blits - before + ' blits');
 
+    // A mesh this size fits in one slice on most machines, which leaves the
+    // interesting path -- a draw spread over several frames -- untested, and
+    // on a machine slow enough it would fail an assertion written for one
+    // slice. A clock that jumps past the deadline on every reading is what
+    // being too slow to finish a slice looks like, without needing to be.
+    let tick = 0;
+    globalThis.performance = { now: () => (tick += 5) };
+    const slowFrom = ctx.blits;
+    fireWin('pointermove', { pointerId: 3, clientX: 44, clientY: 33 });
+    let slices = 0;
+    while (frames.length && ctx.blits === slowFrom && slices < 500) { slices++; frames.shift()(); }
+    check('a draw too big for one slice spans frames, and still finishes',
+        slices > 1 && ctx.blits > slowFrom, slices + ' frames');
+
     fireWin('pointerup', { pointerId: 3 });
-    delete globalThis.requestAnimationFrame;
-    await sleep(700);
 } catch (e) {
     fail++;
     console.log('  FAIL sliced redraw threw: ' + e.message);
     console.log(e.stack.split('\n').slice(1, 4).join('\n'));
+} finally {
+    // Unconditionally: a stub left installed by a throw here would break every
+    // test after it, and the failure would be reported against the wrong one.
+    globalThis.performance = REAL_PERFORMANCE;
+    delete globalThis.requestAnimationFrame;
 }
+await sleep(700);
 
 console.log('\nDefault view: no prose, and none of it computed');
 {
