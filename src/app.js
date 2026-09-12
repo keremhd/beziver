@@ -1700,13 +1700,22 @@ function detailLevel() {
 // it reads straight off the table.
 function detailParams() { return DETAIL[detailLevel() - 1]; }
 
+// The line count used to stand in for "how much did the knob do", and it
+// could not: the emitter puts a whole patch on one line, and the normal
+// (warped) output is always exactly one patch. So the figure was the same 38
+// at every level. What the knob actually moves there is the patch's degree, so
+// report the control net -- it changes at every level, in both modes.
 function updateDetailInfo() {
     const lvl = detailLevel();
     const src = el('scad-out').value;
-    const n = (src.match(/^  \[\[\[/gm) || []).length;
+    const rows = src.match(/^  \[\[\[.*$/gm) || [];
+    const n = rows.length;
+    // Control points are the only `[` in a patch line followed by a number.
+    const pts = n ? (rows[0].match(/\[-?[\d.]/g) || []).length : 0;
+    const side = Math.round(Math.sqrt(pts));
     el('detail-info').textContent = src
         ? `Level ${lvl} of ${DETAIL.length} \u2014 ${n} patch${n === 1 ? '' : 'es'}, ` +
-          `${src.split('\n').length} lines`
+          `${side}\u00d7${side} control points each`
         : `Level ${lvl} of ${DETAIL.length}`;
 }
 

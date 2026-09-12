@@ -468,8 +468,8 @@ try {
         downloads.length ? downloads[0].download : 'no download');
     check('and carries the same code', URL._last && URL._last.text === elements['scad-out'].value);
 
-    check('the readout counts patches and lines',
-        /^Level \d of \d \u2014 \d+ patch(es)?, \d+ lines$/
+    check('the readout counts patches and control points',
+        /^Level \d of \d \u2014 \d+ patch(es)?, \d+\u00d7\d+ control points each$/
             .test(elements['detail-info'].textContent),
         elements['detail-info'].textContent);
     check('the scale states where it came from',
@@ -1229,6 +1229,18 @@ try {
     // The outline patch is always a single patch, whatever the detail level.
     check('the output stays one patch', patches('scad-out') === 1,
         lines('scad-out') + ' lines');
+
+    // Which is exactly why the readout cannot quote lines: one patch on one
+    // line is the same file length at every level. The figure that moves is
+    // the control net, so that is the one the knob has to show.
+    const net = () => (/(\d+)\u00d7(\d+) control points/
+        .exec(elements['detail-info'].textContent) || [0, 0])[1];
+    const hiNet = net();
+    elements['detail'].value = '1';
+    fire('detail', 'input');
+    await sleep(900);
+    check('the readout tracks the level', +net() < +hiNet && +net() > 0,
+        hiNet + ' -> ' + net() + ' control points a side');
 
     // File length must be preamble + one line per patch.
     check('file length is preamble + one line per patch',
