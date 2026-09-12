@@ -1631,6 +1631,20 @@ try {
     check('a draw too big for one slice spans frames, and still finishes',
         slices > 1 && ctx.blits > slowFrom, slices + ' frames');
 
+    // The right pane is a job too: it was the longest single thing in a frame
+    // until it became one.
+    const wctx = elements['warp-canvas'].getContext();
+    const warpFrom = wctx.blits;
+    clickIt('show-grid');
+    let wslices = 0;
+    while (frames.length && wctx.blits === warpFrom && wslices < 500) {
+        wslices++; frames.shift()();
+    }
+    check('the surface draw spans frames as well', wslices > 1 && wctx.blits > warpFrom,
+        wslices + ' frames');
+    clickIt('show-grid');        // back to where the rest of the suite expects it
+    while (frames.length) frames.shift()();
+
     fireWin('pointerup', { pointerId: 3 });
 } catch (e) {
     fail++;

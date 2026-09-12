@@ -1066,6 +1066,7 @@ const clock = () => (typeof performance !== 'undefined' && performance.now
 // How long a slice may hold the thread. A touch landing just after one starts
 // waits at most this long to be answered.
 const SLICE_MS = 8;
+let ResultJob = null;
 
 // What the page is in the middle of, and the longest any one slice has
 // actually held the thread. A browser that stops a script reports it as a bare
@@ -1084,9 +1085,11 @@ function noteSlice(ms, label) {
 }
 let PreviewJob = null;
 
+// 'preview' (the default) is the left pane, 'result' the right one, 'both'
+// the pair. Turning the object moves both; a refit moves only the surface.
 function requestRedraw(what) {
-    Pending.preview = true;
-    if (what === 'both') Pending.result = true;
+    if (what !== 'result') Pending.preview = true;
+    if (what === 'both' || what === 'result') Pending.result = true;
     // Without rAF (the tests' DOM stub) there is no frame to wait for and
     // nothing to spread the work across: draw it all, now.
     if (typeof requestAnimationFrame !== 'function') return flushRedraw(Infinity);
@@ -1132,12 +1135,18 @@ function flushRedraw(deadline) {
         // The right pane waits for the left to finish rather than interleaving
         // with it: two half-rate panes are worse than one settled and one
         // catching up, and it is cheap by comparison.
-        if (!PreviewJob && Pending.result) {
+        if (!PreviewJob && !ResultJob && Pending.result) {
             Pending.result = false;
-            timed('drawing the surface', drawResult);
+            ResultJob = startResult();
         }
+        if (!PreviewJob && ResultJob) timed('drawing the surface', () => {
+            if (ResultJob.step(until)) {
+                ResultJob.finish();
+                ResultJob = null;
+            }
+        });
     } catch (e) {
-        PreviewJob = null;
+        PreviewJob = ResultJob = null;
         Pending.preview = Pending.result = false;
         fail(e);
     }
@@ -1145,7 +1154,9 @@ function flushRedraw(deadline) {
     // drag is in progress, so in practice the two never share a frame; sharing
     // one budget is what guarantees they could not add up to a long one.
     stepPipeline(until, deadline === undefined);
-    if (PreviewJob || Pending.preview || Pending.result || PipelineJob) return scheduleFrame();
+    if (PreviewJob || ResultJob || Pending.preview || Pending.result || PipelineJob) {
+        return scheduleFrame();
+    }
     doing('');
 }
 
@@ -1427,7 +1438,7 @@ function drawWaterGrid(R, pt, inner, outer) {
 
 let ResultGeom = null;   // { kind: 'warp', patch } | { kind: 'grid', grid }, + cells
 
-function setResult(geom) { ResultGeom = geom; drawResult(); }
+function setResult(geom) { ResultGeom = geom; requestRedraw('result'); }
 
 // The Detail slider IS control-net density, and until now nothing on screen
 // said so. These are the isoparametric lines of the control net drawn on the
@@ -1436,9 +1447,7 @@ function setResult(geom) { ResultGeom = geom; drawResult(); }
 // an isoparametric grid at the same spacing as its control net instead, which
 // keeps the slider from being a no-op there. Default on -- it is the feedback
 // the slider was missing, not a diagnostic.
-const showGrid = installToggle('show-grid', true, () => {
-    try { drawResult(); } catch (e) { fail(e); }
-});
+const showGrid = installToggle('show-grid', true, () => requestRedraw('result'));
 
 // Sample counts across the surface. 56 is where a smooth patch stops showing
 // facets at 256 px; the grid fallback samples the same way.
@@ -1449,8 +1458,11 @@ const RESULT_STEPS = 56;
 // unclamped, since clamping z flattens the overshoot onto a plane.
 const RESULT_HEADROOM = 0.05;
 
-function drawResult() {
-    if (!Mesh || !ResultGeom || !Depth || !Depth.water || !Input) return;
+// Sliced like the mesh: at the top detail levels this is a few hundred
+// thousand tessellated triangles with a per-fragment overlay, and held in one
+// piece it is the longest thing left in a frame.
+function startResult() {
+    if (!Mesh || !ResultGeom || !Depth || !Depth.water || !Input) return null;
     const N = previewSize('warp-canvas');
     const R = newRaster(N);
     const P = projector(N);
@@ -1555,7 +1567,9 @@ function drawResult() {
         return z01;
     };
 
-    for (let j = 0; j <= S; j++) {
+    // Sampling the surface, then drawing it: a row of each between clock
+    // readings, which is fine enough at every detail level and costs nothing.
+    const sampleRow = (j) => {
         for (let i = 0; i <= S; i++) {
             const idx = j * (S + 1) + i;
             const h = surfaceAt(i / S, j / S);
@@ -1563,7 +1577,7 @@ function drawResult() {
             vx[idx] = OUT[0]; vy[idx] = OUT[1]; vz[idx] = OUT[2];
             vh[idx] = h; ve[idx] = ERR[0]; vc[idx] = ERR[1]; ok[idx] = 1;
         }
-    }
+    };
 
     const sx = new Float64Array(3), sy = new Float64Array(3), ez = new Float64Array(3);
     const hh = new Float64Array(3), ee = new Float64Array(3), cc = new Float64Array(3);
@@ -1610,18 +1624,37 @@ function drawResult() {
         rasterTri(R, sx, sy, ez, shade);
     };
 
-    for (let j = 0; j < S; j++) {
+    const drawRow = (j) => {
         for (let i = 0; i < S; i++) {
             const p = j * (S + 1) + i;
             tri(p, p + 1, p + S + 2);
             tri(p, p + S + 2, p + S + 1);
         }
-    }
+    };
 
-    if (showGrid()) drawSurfaceGrid(R, P, surfaceAt, OUT);
-    flushRaster(WarpCtx, R);
-    updateLegend(overlay);
+    let vj = 0, tj = 0;
+    return {
+        step(deadline) {
+            while (vj <= S) {
+                sampleRow(vj++);
+                if (clock() >= deadline) return false;
+            }
+            while (tj < S) {
+                drawRow(tj++);
+                if (clock() >= deadline) return false;
+            }
+            return true;
+        },
+        // The grid goes over a finished surface, and the blit is the only
+        // moment the canvas changes.
+        finish() {
+            if (showGrid()) drawSurfaceGrid(R, P, surfaceAt, OUT);
+            flushRaster(WarpCtx, R);
+            updateLegend(overlay);
+        },
+    };
 }
+
 
 // Drawn against the z-buffer that was just filled, not over the top of it, so
 // the lines sit ON the surface and vanish where it curves away. They darken
@@ -1858,7 +1891,7 @@ function dragBy(target, dx, dy) {
 const showErrors = installToggle('show-errors', false, () => {
     ErrField = null;
     updateLegend(showErrors() ? errorField() : null);
-    try { drawResult(); } catch (e) { fail(e); }
+    requestRedraw('result');
 });
 
 // Cached per fit. Null entries are pixels outside the mask, where there is no
