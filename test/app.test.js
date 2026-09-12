@@ -136,7 +136,9 @@ function makeCanvas() {
         canvas,
         fillStyle: '', strokeStyle: '', lineWidth: 1, font: '',
         getImageData(x, y, w, h) { sync(); return new ImageDataStub(w, h, buf.slice()); },
-        putImageData(img) { sync(); buf.set(img.data.subarray(0, buf.length)); },
+        // Counted: a sliced draw must reach the canvas once, when it is done.
+        blits: 0,
+        putImageData(img) { sync(); ctx.blits++; buf.set(img.data.subarray(0, buf.length)); },
         createImageData(w, h) { return new ImageDataStub(w, h); },
         clearRect() {}, fillRect() {}, drawImage() {},
         beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, arc() {},
@@ -1525,6 +1527,39 @@ try {
 } catch (e) {
     fail++;
     console.log('  FAIL overlay edge threw: ' + e.message);
+    console.log(e.stack.split('\n').slice(1, 4).join('\n'));
+}
+
+console.log('\nRedraws are sliced across frames');
+try {
+    // With frames to wait for, a drag must not draw on the spot: the work is
+    // what a browser stops the script for.
+    const frames = [];
+    globalThis.requestAnimationFrame = (fn) => frames.push(fn);
+    const ctx = elements['stl-canvas'].getContext();
+    const before = ctx.blits;
+
+    fire('stl-canvas', 'pointerdown',
+         { pointerId: 3, pointerType: 'mouse', clientX: 10, clientY: 10 });
+    fireWin('pointermove', { pointerId: 3, clientX: 24, clientY: 18 });
+    check('a drag asks for a frame instead of drawing in the handler',
+        ctx.blits === before && frames.length === 1,
+        ctx.blits - before + ' blits, ' + frames.length + ' frames');
+
+    fireWin('pointermove', { pointerId: 3, clientX: 31, clientY: 25 });
+    check('and a second move joins that frame rather than queueing another',
+        frames.length === 1, frames.length + ' frames');
+
+    frames.shift()();
+    check('running the frame is what reaches the canvas', ctx.blits > before,
+        ctx.blits - before + ' blits');
+
+    fireWin('pointerup', { pointerId: 3 });
+    delete globalThis.requestAnimationFrame;
+    await sleep(700);
+} catch (e) {
+    fail++;
+    console.log('  FAIL sliced redraw threw: ' + e.message);
     console.log(e.stack.split('\n').slice(1, 4).join('\n'));
 }
 

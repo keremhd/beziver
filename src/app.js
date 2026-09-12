@@ -493,7 +493,7 @@ installReset('reset-object', () => {
     el('stl-water').value = LoadWater;
     updateWaterInfo();
     deriveCapture();
-    try { drawPreview(); drawResult(); } catch (e) { return fail(e); }
+    requestRedraw('both');
     scheduleRun('input');
 });
 
@@ -976,49 +976,77 @@ const lambert = (ax, ay, az, bx, by, bz) => {
 // ------------------------------------------------- left pane: the model
 
 // Both previews rasterise every triangle in software, and a drag delivers
-// pointermove faster than that finishes. One redraw per frame, from whatever
-// the state is by then, keeps the queue from growing past what the main thread
-// can answer. Without rAF (the tests' DOM stub) there is no frame to wait for.
+// pointermove far faster than that finishes. Drawing per event, or even per
+// frame, hands the thread a backlog it never works off. Instead a request only
+// marks what is out of date, and the frames below draw it a slice at a time.
 const Pending = { preview: false, result: false, frame: false };
-const now = () => (typeof performance !== 'undefined' && performance.now
+// Named for what it is rather than `now`: the pinch handler already has a
+// local `now`, and one shadowing the other reads as a mistake.
+const clock = () => (typeof performance !== 'undefined' && performance.now
     ? performance.now() : Date.now());
+
+// How long a slice may hold the thread. Short enough that a touch landing just
+// after one starts is answered within a frame.
+const SLICE_MS = 8;
+let PreviewJob = null;
 
 function requestRedraw(what) {
     Pending.preview = true;
     if (what === 'both') Pending.result = true;
-    if (typeof requestAnimationFrame !== 'function') return flushRedraw();
-    if (Pending.frame) return;
+    // Without rAF (the tests' DOM stub) there is no frame to wait for and
+    // nothing to spread the work across: draw it all, now.
+    if (typeof requestAnimationFrame !== 'function') return flushRedraw(Infinity);
+    scheduleFrame();
+}
+
+function scheduleFrame() {
+    if (Pending.frame || typeof requestAnimationFrame !== 'function') return;
     Pending.frame = true;
-    requestAnimationFrame(flushRedraw);
+    requestAnimationFrame(() => flushRedraw());
 }
 
-// On a mesh big enough that one redraw outlasts a frame, drawing every frame
-// leaves the thread nothing for the touches that are driving the drag, and a
-// browser that finds a page unresponsive for long enough stops the script. So
-// a redraw waits out a gap as long as the last one took, which holds the
-// drawing to half the thread however heavy the mesh is. The picture lags a
-// little while a big model turns; the page keeps answering.
-let drawMs = 0, drawnAt = 0;
-
-function flushRedraw() {
-    const start = now();
-    if (drawMs > 4 && start - drawnAt < drawMs &&
-        typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(flushRedraw);   // still pending, just not yet
-        return;
-    }
-    const preview = Pending.preview, result = Pending.result;
-    Pending.preview = Pending.result = Pending.frame = false;
+function flushRedraw(deadline) {
+    Pending.frame = false;
+    const until = deadline === undefined ? clock() + SLICE_MS : deadline;
     try {
-        if (preview) drawPreview();
-        if (result) drawResult();
-    } catch (e) { fail(e); }
-    drawnAt = now();
-    drawMs = drawnAt - start;
+        // The frame in flight finishes before a newer request starts one.
+        // Restarting on each request would mean a mesh too big to draw inside
+        // one slice was abandoned every time the finger moved, and the canvas
+        // would hold its last complete picture until the drag ended. So the
+        // newest request becomes the NEXT frame, and the cost is that the
+        // picture trails the finger by however long a frame takes.
+        if (!PreviewJob && Pending.preview) {
+            Pending.preview = false;
+            PreviewJob = startPreview();
+        }
+        if (PreviewJob && PreviewJob.step(until)) {
+            PreviewJob.finish();
+            PreviewJob = null;
+        }
+        // The right pane waits for the left to finish rather than interleaving
+        // with it: two half-rate panes are worse than one settled and one
+        // catching up, and it is cheap by comparison.
+        if (!PreviewJob && Pending.result) {
+            Pending.result = false;
+            drawResult();
+        }
+    } catch (e) {
+        PreviewJob = null;
+        Pending.preview = Pending.result = false;
+        fail(e);
+    }
+    if (PreviewJob || Pending.preview || Pending.result) scheduleFrame();
 }
 
-function drawPreview() {
-    if (!Mesh) return;
+// The mesh is rasterised in slices. A drag asks for a new frame far faster
+// than a big mesh can be drawn, and a single uninterrupted pass over a few
+// hundred thousand triangles is long enough for a browser to decide the page
+// has stopped answering and stop the script. A slice does what it can inside a
+// few milliseconds and hands the thread back. The canvas holds the last
+// finished frame until a new one is complete, so a half-drawn mesh is never
+// shown.
+function startPreview() {
+    if (!Mesh) return null;
     const N = previewSize('stl-canvas');
     const R = newRaster(N);
     const P = projector(N);
@@ -1056,22 +1084,37 @@ function drawPreview() {
         RGB[0] = r * lam; RGB[1] = g * lam; RGB[2] = b * lam;
     };
 
-    for (let t = 0; t < V.length; t += 9) {
-        for (let j = 0; j < 3; j++) {
-            const x = V[t + j * 3] - cx, y = V[t + j * 3 + 1] - cy, z = V[t + j * 3 + 2] - cz;
-            ex[j] = Mc[0] * x + Mc[1] * y + Mc[2] * z;
-            ey[j] = Mc[3] * x + Mc[4] * y + Mc[5] * z;
-            ez[j] = Mc[6] * x + Mc[7] * y + Mc[8] * z;
-            qz[j] = Mk[6] * x + Mk[7] * y + Mk[8] * z;
-            sx[j] = P.toX(ex[j]); sy[j] = P.toY(ey[j]);
-        }
-        lam = lambert(ex[1] - ex[0], ey[1] - ey[0], ez[1] - ez[0],
-                      ex[2] - ex[0], ey[2] - ey[0], ez[2] - ez[0]);
-        rasterTri(R, sx, sy, ez, shade);
-    }
-
-    drawCutPlane(R, P, Mc, Mk, level);
-    flushRaster(StlCtx, R);
+    let t = 0;
+    return {
+        // True when the mesh is finished; false when the slice ran out of time
+        // and there is more to do. Reading the clock per triangle would cost
+        // more than a triangle does, so a slice is timed in batches.
+        step(deadline) {
+            let batch = 0;
+            for (; t < V.length; t += 9) {
+                if (++batch >= 512) { batch = 0; if (clock() >= deadline) return false; }
+                for (let j = 0; j < 3; j++) {
+                    const x = V[t + j * 3] - cx, y = V[t + j * 3 + 1] - cy,
+                          z = V[t + j * 3 + 2] - cz;
+                    ex[j] = Mc[0] * x + Mc[1] * y + Mc[2] * z;
+                    ey[j] = Mc[3] * x + Mc[4] * y + Mc[5] * z;
+                    ez[j] = Mc[6] * x + Mc[7] * y + Mc[8] * z;
+                    qz[j] = Mk[6] * x + Mk[7] * y + Mk[8] * z;
+                    sx[j] = P.toX(ex[j]); sy[j] = P.toY(ey[j]);
+                }
+                lam = lambert(ex[1] - ex[0], ey[1] - ey[0], ez[1] - ez[0],
+                              ex[2] - ex[0], ey[2] - ey[0], ez[2] - ez[0]);
+                rasterTri(R, sx, sy, ez, shade);
+            }
+            return true;
+        },
+        // The cut plane goes on last, over a finished mesh, and the blit is
+        // the only moment the canvas changes.
+        finish() {
+            drawCutPlane(R, P, Mc, Mk, level);
+            flushRaster(StlCtx, R);
+        },
+    };
 }
 
 // The error palette. Diverging, multi-hue, neutral at zero: warm (amber ->
@@ -1634,9 +1677,12 @@ function installZoom() {
 }
 installZoom();
 
+// The settled frame goes through the same slicing as the moving ones: it is
+// the largest single draw there is -- full resolution, nothing skipped -- and
+// it is the least urgent, since the finger has already stopped.
 function redrawPreviews() {
     if (!Mesh) return;
-    try { drawPreview(); drawResult(); } catch (e) { fail(e); }
+    requestRedraw('both');
 }
 
 // The backing store is sized from the CSS box, so a window resize -- or a drag
@@ -1680,7 +1726,7 @@ function dragBy(target, dx, dy) {
     ObjM = mul3(mul3(tr3(CamM), mul3(D, CamM)), ObjM);
     deriveCapture();
 
-    // The cut-off follows at once -- drawPreview reads the capture extent
+    // The cut-off follows at once -- the preview reads the capture extent
     // straight off the mesh, so it does not wait for a depth render. The
     // pipeline waits for the usual debounce, and restarts from 'input' because
     // the orthographic axis has moved.
