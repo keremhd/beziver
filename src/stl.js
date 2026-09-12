@@ -92,7 +92,11 @@ function transformVerts(verts, M, center) {
 // the result is what you would see looking straight down at the model.
 // Returns depths in model units, plus the scale factors needed to report
 // errors and emit OpenSCAD in those same units.
-function depthRender(verts, W, H, opts) {
+// A generator for the same reason the corner search is one: at a few hundred
+// thousand triangles this is the longest stage of a pipeline run, and it
+// scales with the model rather than with any setting. depthRender() below runs
+// it straight through.
+function* depthRenderSteps(verts, W, H, opts) {
     opts = opts || {};
     const margin = opts.margin === undefined ? 2 : opts.margin;
     const b = bounds(verts);
@@ -110,7 +114,11 @@ function depthRender(verts, W, H, opts) {
 
     const px = new Float64Array(3), py = new Float64Array(3), pz = new Float64Array(3);
 
+    let batch = 0;
     for (let t = 0; t < verts.length; t += 9) {
+        // Reading a clock per triangle would cost more than a triangle; the
+        // caller decides how often a yield is worth acting on.
+        if (++batch >= 512) { batch = 0; yield; }
         for (let k = 0; k < 3; k++) {
             px[k] = verts[t + k * 3] * s + ox;
             py[k] = verts[t + k * 3 + 1] * s + oy;
@@ -186,4 +194,17 @@ function applyWater(depth, level01) {
     return { zn, mask, water, span, above, unitScale: span > 0 ? span : 1 };
 }
 
-module.exports = { parseSTL, bounds, rotationMatrix, transformVerts, depthRender, applyWater };
+function drive(gen) {
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    return r.value;
+}
+
+function depthRender(verts, W, H, opts) {
+    return drive(depthRenderSteps(verts, W, H, opts));
+}
+
+module.exports = {
+    parseSTL, bounds, rotationMatrix, transformVerts,
+    depthRender, depthRenderSteps, applyWater,
+};

@@ -1530,6 +1530,49 @@ try {
     console.log(e.stack.split('\n').slice(1, 4).join('\n'));
 }
 
+console.log('\nThe pipeline is sliced across frames too');
+const REAL_PERF_PIPE = globalThis.performance;
+try {
+    // A run is the longest thing the page does; held in one piece it is what a
+    // phone stops the script for.
+    const frames = [];
+    globalThis.requestAnimationFrame = (fn) => frames.push(fn);
+    const settled = elements['scad-out'].value;
+
+    // Turn the object, which restarts the pipeline from the input stage.
+    fire('stl-canvas', 'pointerdown',
+         { pointerId: 5, pointerType: 'mouse', clientX: 10, clientY: 10 });
+    fireWin('pointermove', { pointerId: 5, clientX: 70, clientY: 40 });
+    fireWin('pointerup', { pointerId: 5 });
+    await sleep(400);           // past the debounce, so the run is under way
+
+    let slices = 0;
+    while (frames.length && slices < 4000) { slices++; frames.shift()(); }
+    check('a run takes more than one frame, and finishes', slices > 1,
+        slices + ' frames');
+    check('and it produces output, not a half-finished state',
+        elements['scad-out'].value && elements['scad-out'].value !== settled,
+        elements['scad-out'].value.split('\n').length + ' lines');
+
+    // Same computation either way: the yields carry state, they do not change it.
+    delete globalThis.requestAnimationFrame;
+    const sliced = elements['scad-out'].value;
+    fire('detail', 'input');
+    await sleep(700);
+    fire('detail', 'input');
+    await sleep(700);
+    check('a run driven straight through gives the same answer as a sliced one',
+        elements['scad-out'].value === sliced,
+        elements['scad-out'].value === sliced ? 'identical' : 'differs');
+} catch (e) {
+    fail++;
+    console.log('  FAIL sliced pipeline threw: ' + e.message);
+    console.log(e.stack.split('\n').slice(1, 4).join('\n'));
+} finally {
+    globalThis.performance = REAL_PERF_PIPE;
+    delete globalThis.requestAnimationFrame;
+}
+
 console.log('\nRedraws are sliced across frames');
 const REAL_PERFORMANCE = globalThis.performance;
 try {

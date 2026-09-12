@@ -228,7 +228,13 @@ function scoreCorners(pts, corners, D) {
 // from a few rotations of equally spaced corners, then coordinate-descend --
 // the boundary fit error is itself the right objective, since corners belong
 // where a single Bezier curve stops being able to follow the outline.
-function chooseCorners(pts, D, opts) {
+// The corner search is the longest single computation in the pipeline: four
+// restarts, three refinement rounds, four corners and up to 28 trial positions
+// each, with four side curves fitted per trial. It is written as a generator
+// so a caller can spend it a slice at a time and leave the thread answerable
+// in between; chooseCorners() below runs it straight through for callers that
+// only want the answer.
+function* chooseCornersSteps(pts, D, opts) {
     opts = opts || {};
     const n = pts.length;
     const minSep = Math.max(D + 1, Math.floor(n * 0.04));
@@ -260,6 +266,7 @@ function chooseCorners(pts, D, opts) {
                     trial[k] = (prev + o) % n;
                     const s = scoreCorners(pts, trial, D);
                     if (s < localScore) { localScore = s; localBest = trial[k]; }
+                    yield;
                 }
                 corners[k] = localBest;
                 score = localScore;
@@ -268,6 +275,17 @@ function chooseCorners(pts, D, opts) {
         if (score < bestScore) { bestScore = score; best = corners.slice(); }
     }
     return { corners: best, searched: true, score: bestScore };
+}
+
+// Every generator here has one of these: the same computation, run to the end.
+function drive(gen) {
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    return r.value;
+}
+
+function chooseCorners(pts, D, opts) {
+    return drive(chooseCornersSteps(pts, D, opts));
 }
 
 // ------------------------------------------------------------ the warp fit
@@ -530,7 +548,11 @@ function buildRows(P, D, M, opts) {
 // a single Bezier patch of such a degree is numerically pointless anyway.
 const MAX_DEGREE = 20;
 
-function warpFit(fit, contour, W, H, opts) {
+// Sliceable for the same reason the corner search is: this is the long pole of
+// a pipeline run, and a phone will stop a script that holds the thread for all
+// of it. The yields sit at stage boundaries, where the state is just the
+// locals already in scope.
+function* warpFitSteps(fit, contour, W, H, opts) {
     opts = opts || {};
     let D = Math.max(3, Math.min(MAX_DEGREE, Math.round(opts.degree || 6)));
     // 255 for an 8-bit image, or the above-water span for an STL depth map
@@ -554,13 +576,14 @@ function warpFit(fit, contour, W, H, opts) {
     const degreeClamped = Math.round(opts.degree || 6) > maxD;
     if (D > maxD) D = maxD;
 
-    const cs = chooseCorners(lifted, D, { search: opts.searchCorners !== false });
+    const cs = yield* chooseCornersSteps(lifted, D, { search: opts.searchCorners !== false });
     const corners = cs.corners;
 
     const sides = [];
     for (let k = 0; k < 4; k++) {
         const side = sideSlice(lifted, corners[k], corners[(k + 1) % 4]);
         sides.push(fitSideCurve(side, D, iters));
+        yield;
     }
 
     // assemble the boundary control net (see the corner bookkeeping below)
@@ -582,6 +605,8 @@ function warpFit(fit, contour, W, H, opts) {
 
     // Optionally replace the Coons interior with a harmonic one. The boundary
     // ring is untouched either way, so the patch edges stay on the outline.
+    yield;
+
     let harmonic = null;
     if (opts.domain === 'harmonic') {
         const K = opts.harmonicGrid || 49;
@@ -597,8 +622,11 @@ function warpFit(fit, contour, W, H, opts) {
                 });
             }
         }
+        yield;
         solveInteriorCoord(P, D, hrows, 0, lambdaXY);
+        yield;
         solveInteriorCoord(P, D, hrows, 1, lambdaXY);
+        yield;
 
         // folds in the relaxed map itself, before the Bezier net approximates it
         const hd = [];
@@ -617,11 +645,13 @@ function warpFit(fit, contour, W, H, opts) {
     // Now x,y are frozen, so the heights are a plain linear solve.
     const M = opts.samples || Math.max(24, 4 * D);
     const built = buildRows(P, D, M, { mask: opts.mask, W, H });
+    yield;
     for (const row of built.rows) {
         row.target[2] = evalAt(fit,
             Math.min(1, Math.max(0, row.sx)), Math.min(1, Math.max(0, row.sy)));
     }
     const solved = solveInteriorCoord(P, D, built.rows, 2, lambdaZ);
+    yield;
 
     // Area-weighted residual: weighting by |det J| makes this the mean error
     // over the blob rather than over parameter space. Those differ wherever
@@ -659,6 +689,10 @@ function warpFit(fit, contour, W, H, opts) {
         },
         interior,
     };
+}
+
+function warpFit(fit, contour, W, H, opts) {
+    return drive(warpFitSteps(fit, contour, W, H, opts));
 }
 
 // ------------------------------------------------------------- rasterising
@@ -714,6 +748,7 @@ function rasterizePatch(P, W, H, res) {
 }
 
 module.exports = {
+    chooseCornersSteps, warpFitSteps, drive,
     MAX_DEGREE, bernAll, curveAt, curveDeriv, patchAt, patchPartials,
     chordParams, solveInterior, correctParams, curveErr, fitSideCurve,
     sideSlice, scoreCorners, chooseCorners, coonsInterior,

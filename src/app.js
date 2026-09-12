@@ -231,27 +231,36 @@ function markStale(from) {
 
 // The pipeline always runs itself; the debounce is so dragging a slider
 // re-runs once at the end rather than per tick.
+//
+// It does not run at all while a drag is in progress. A run is far and away
+// the longest thing this page does -- the warp alone is ~100 ms on a laptop
+// and several times that on a phone -- and a browser stops a script that
+// holds the thread that long, repeatedly. The debounce alone did not prevent
+// that: a busy thread delivers pointermove in bursts, the gaps between them
+// outlast the debounce, and the run fires mid-drag, which makes the thread
+// busier still. Nothing is lost by waiting, either. The fit answers a
+// question about an orientation that is still being chosen, and the surface
+// already follows the live capture frame while it is chosen.
 function scheduleRun(from) {
     markStale(from);
     if (runTimer) clearTimeout(runTimer);
-    runTimer = setTimeout(() => { runTimer = null; runFrom(from); }, 280);
+    runTimer = setTimeout(() => {
+        runTimer = null;
+        if (Dragging) return scheduleRun(from);
+        runFrom(from);
+    }, 280);
 }
 
-function runFrom(from) {
-    if (running) return;
-    running = true;
-    errored = false;
-    clearErrors();
-    try {
+function* runSteps(from) {
         const i = STAGES.indexOf(from);
-        if (i <= 0) ensureInput();
-        if (i <= 1) runFit();
+        if (i <= 0) yield* ensureInputSteps();
+        if (i <= 1) yield* runFitSteps();
         if (i <= 2 && LastFit) {
             // The warp is the product. When it cannot be built the rectangular
             // fit is still a usable answer, so take it automatically -- this is
             // a fallback, never a question put to the user.
             try {
-                runWarp();
+                yield* runWarpSteps();
                 setFallback(false);
             } catch (e) {
                 console.warn('warp failed, falling back', e);
@@ -269,11 +278,64 @@ function runFrom(from) {
                     '\nfell back to the rectangular fit';
             }
         }
+}
+
+// A run is the longest thing this page does, so it is spent the way the mesh
+// is drawn: a slice at a time, out of the same budget, on the same frames.
+// A request arriving mid-run is remembered rather than dropped -- now that a
+// run spans frames, dropping it would leave the output stale with nothing to
+// come back and fix it.
+let PipelineJob = null, pendingFrom = null;
+let SlicedMs = 0;              // main-thread time actually spent stepping
+
+function runFrom(from) {
+    if (running) {
+        const i = STAGES.indexOf(from);
+        if (pendingFrom === null || i < STAGES.indexOf(pendingFrom)) pendingFrom = from;
+        return;
+    }
+    running = true;
+    errored = false;
+    clearErrors();
+    PipelineJob = runSteps(from);
+    if (typeof requestAnimationFrame !== 'function') return stepPipeline(Infinity);
+    setStatus();
+    scheduleFrame();
+}
+
+// A stage that asks for a redraw re-enters the frame loop, and without this
+// that lands back here and steps the generator it is already inside.
+let stepping = false;
+
+function stepPipeline(deadline) {
+    if (!PipelineJob || stepping) return;
+    stepping = true;
+    const start = clock();
+    try {
+        // Stages differ by orders of magnitude in length, so the clock is read
+        // at every yield rather than every so many; the stages that yield
+        // often enough for that to cost anything batch it themselves.
+        for (;;) {
+            if (PipelineJob.next().done) {
+                PipelineJob = null;
+                break;
+            }
+            if (clock() >= deadline) break;
+        }
     } catch (e) {
+        PipelineJob = null;
         fail(e);
     } finally {
-        running = false;
-        setStatus();
+        stepping = false;
+    }
+    SlicedMs += clock() - start;
+    if (PipelineJob) return;
+    running = false;
+    setStatus();
+    if (pendingFrom !== null) {
+        const next = pendingFrom;
+        pendingFrom = null;
+        runFrom(next);
     }
 }
 
@@ -333,11 +395,19 @@ function where(tag, e) { e.where = tag; return e; }
 
 // ==================================================================== input
 
-function ensureInput() {
+function* ensureInputSteps() {
     if (!Mesh) throw new Error('load an STL first');
-    captureDepth();            // also commits the depth map as the height field
+    yield* captureDepthSteps();   // also commits the depth map as the height field
     state.input = 'ok';
     refreshExportSizes();
+}
+
+// The cut-off slider's path: the orientation has not moved, so the cached
+// depth render is reused and there is nothing long enough here to slice.
+function captureDepth() {
+    const g = captureDepthSteps();
+    let r = g.next();
+    while (!r.done) r = g.next();
 }
 
 el('stl-upload').addEventListener('change', onStlUpload);
@@ -692,7 +762,7 @@ function updateWaterInfo() {
 // Depth render along the CAPTURE axis + water threshold + commit as the height
 // field. There is no separate "use this" step: the depth map IS the input.
 let DepthKey = '';
-function captureDepth() {
+function* captureDepthSteps() {
     if (!Mesh) return;
     const n = autoResolution(Mesh.count);
     // The render depends on the capture orientation alone -- the cut-off is
@@ -702,7 +772,7 @@ function captureDepth() {
     const key = n + ':' + CapM.join(',');
     if (!Depth || DepthKey !== key) {
         const rot = STL.transformVerts(Mesh.verts, CapM, Mesh.bounds.center);
-        Depth = STL.depthRender(rot, n, n, {});
+        Depth = yield* STL.depthRenderSteps(rot, n, n, {});
         DepthKey = key;
     }
 
@@ -987,7 +1057,7 @@ const clock = () => (typeof performance !== 'undefined' && performance.now
 
 // How long a slice may hold the thread. A touch landing just after one starts
 // waits at most this long to be answered.
-const SLICE_MS = 1;
+const SLICE_MS = 8;
 let PreviewJob = null;
 
 function requestRedraw(what) {
@@ -1035,7 +1105,11 @@ function flushRedraw(deadline) {
         Pending.preview = Pending.result = false;
         fail(e);
     }
-    if (PreviewJob || Pending.preview || Pending.result) scheduleFrame();
+    // The pipeline gets whatever is left of the slice. It only runs when no
+    // drag is in progress, so in practice the two never share a frame; sharing
+    // one budget is what guarantees they could not add up to a long one.
+    stepPipeline(until);
+    if (PreviewJob || Pending.preview || Pending.result || PipelineJob) scheduleFrame();
 }
 
 // The mesh is rasterised in slices. A drag asks for a new frame far faster
@@ -1088,12 +1162,11 @@ function startPreview() {
     return {
         // True when the mesh is finished; false when the slice ran out of time
         // and there is more to do. Reading the clock per triangle would cost
-        // more than a triangle does, so a slice is timed in batches -- small
-        // ones, since a batch that overruns is measured against a 1 ms budget.
+        // more than a triangle does, so a slice is timed in batches.
         step(deadline) {
             let batch = 0;
             for (; t < V.length; t += 9) {
-                if (++batch >= 64) { batch = 0; if (clock() >= deadline) return false; }
+                if (++batch >= 512) { batch = 0; if (clock() >= deadline) return false; }
                 for (let j = 0; j < 3; j++) {
                     const x = V[t + j * 3] - cx, y = V[t + j * 3 + 1] - cy,
                           z = V[t + j * 3 + 2] - cz;
@@ -1990,8 +2063,10 @@ function fitOptions() {
     return { basis: FIT_BASIS, nx: n, ny: n, lambda: FIT_LAMBDA };
 }
 
-function runFit() {
-    if (!Input) ensureInput();
+// Sliced like everything else downstream of a drag: yields sit where a stage
+// ends, so what carries across a pause is the locals already in scope.
+function* runFitSteps() {
+    if (!Input) yield* ensureInputSteps();
     const { W, H, z, mask, contour } = Input;
     const o = fitOptions();
 
@@ -2005,11 +2080,14 @@ function runFit() {
         basis: o.basis, nx: o.nx, ny: o.ny, mask, weight, lambda: o.lambda,
     });
     const tFit = performance.now() - t0;
+    yield;
 
     const grid = FIT.evalGrid(fit, W, H);
+    yield;
     const st = REPORT.stats(z, grid, mask, W, H, uScale());
     const lift = REPORT.liftContour(fit, contour, z, W, H, uScale());
     const patches = FIT.toBezierPatches(fit);
+    yield;
 
     LastFit = { fit, grid, st, lift, patches };
     state.fit = 'ok';
@@ -2052,12 +2130,14 @@ function runFit() {
 
 // ============================================================= stage 2 warp
 
-function runWarp() {
+function* runWarpSteps() {
     if (!LastFit) throw new Error('no fitted surface yet');
     const { W, H, z, mask, contour } = Input;
 
-    const t0 = performance.now();
-    const w = WARP.warpFit(LastFit.fit, contour, W, H, {
+    // Compute time, not wall clock: the warp is spread over frames now, and
+    // the gaps between slices are not work this report should be charging it.
+    const t0 = SlicedMs;
+    const w = yield* WARP.warpFitSteps(LastFit.fit, contour, W, H, {
         degree: detailParams().degree,
         domain: WARP_DOMAIN,
         searchCorners: WARP_SEARCH_CORNERS,
@@ -2066,7 +2146,8 @@ function runWarp() {
         zScale: uScale(),
         mask,
     });
-    const tWarp = performance.now() - t0;
+    const tWarp = SlicedMs - t0;
+    yield;
 
     // The output has to be a closed solid. It is a shell: the surface and a
     // copy offset straight down. Two graphs of z = f(x,y) a constant apart
@@ -2090,6 +2171,7 @@ function runWarp() {
 
     // Compare against the ORIGINAL height field, not against f -- that is the
     // number that answers "how good is the final patch".
+    yield;
     const ras = WARP.rasterizePatch(w.patch, W, H);
     let sq = 0, n = 0, covIn = 0, maskN = 0;
     for (let i = 0; i < W * H; i++) {
@@ -2101,6 +2183,7 @@ function runWarp() {
         }
     }
     const e2e = n ? Math.sqrt(sq / n) : NaN;
+    yield;
 
     LastWarp = { w, ras, e2e };
     ErrField = null;              // a new surface is a new error field
