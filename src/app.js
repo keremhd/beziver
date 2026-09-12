@@ -985,9 +985,9 @@ const Pending = { preview: false, result: false, frame: false };
 const clock = () => (typeof performance !== 'undefined' && performance.now
     ? performance.now() : Date.now());
 
-// How long a slice may hold the thread. Short enough that a touch landing just
-// after one starts is answered within a frame.
-const SLICE_MS = 8;
+// How long a slice may hold the thread. A touch landing just after one starts
+// waits at most this long to be answered.
+const SLICE_MS = 1;
 let PreviewJob = null;
 
 function requestRedraw(what) {
@@ -1088,11 +1088,12 @@ function startPreview() {
     return {
         // True when the mesh is finished; false when the slice ran out of time
         // and there is more to do. Reading the clock per triangle would cost
-        // more than a triangle does, so a slice is timed in batches.
+        // more than a triangle does, so a slice is timed in batches -- small
+        // ones, since a batch that overruns is measured against a 1 ms budget.
         step(deadline) {
             let batch = 0;
             for (; t < V.length; t += 9) {
-                if (++batch >= 512) { batch = 0; if (clock() >= deadline) return false; }
+                if (++batch >= 64) { batch = 0; if (clock() >= deadline) return false; }
                 for (let j = 0; j < 3; j++) {
                     const x = V[t + j * 3] - cx, y = V[t + j * 3 + 1] - cy,
                           z = V[t + j * 3 + 2] - cz;
