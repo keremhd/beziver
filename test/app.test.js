@@ -1564,6 +1564,21 @@ try {
     check('a run driven straight through gives the same answer as a sliced one',
         elements['scad-out'].value === sliced,
         elements['scad-out'].value === sliced ? 'identical' : 'differs');
+
+    // A browser that stops a script says only "Script error.", so what the
+    // page was in the middle of is the whole of the report.
+    check('the longest slice is recorded for the banner to quote',
+        typeof globalThis.BEZIVER_SLICE === 'number' && globalThis.BEZIVER_SLICE > 0,
+        Math.round(globalThis.BEZIVER_SLICE) + ' ms in "' +
+        globalThis.BEZIVER_SLICE_AT + '"');
+    const stages = /(?:doing|timed)\('([^']+)'/g;
+    const named = [];
+    let mm;
+    while ((mm = stages.exec(appSrc))) if (mm[1]) named.push(mm[1]);
+    check('and every long stage names itself',
+        ['reading the model', 'fitting the surface', 'fitting the outline patch',
+         'drawing the model', 'drawing the surface'].every((n) => named.includes(n)),
+        named.join(', '));
 } catch (e) {
     fail++;
     console.log('  FAIL sliced pipeline threw: ' + e.message);

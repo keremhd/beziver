@@ -8,7 +8,7 @@
     // but wires up nothing -- every control silently dead. Rather than leave
     // that to guesswork, the page states which build it expects and complains
     // if the script never initialises or reports a different one.
-    window.BEZIVER_BUILD = 22;
+    window.BEZIVER_BUILD = 23;
     (function () {
         var hideTimer = null;
         // A message the page did not survive stays, since nothing else on the
@@ -56,8 +56,14 @@
                 : ev.target && ev.target.src
                     ? 'could not fetch ' + ev.target.src
                     : '';
-            if (loaded) show(what ? 'Something went wrong: ' + what
-                                  : 'Something went wrong.', true);
+            // A script the browser stopped arrives with nothing in it, so
+            // what the page was in the middle of is all there is to report.
+            var doing = window.BEZIVER_DOING;
+            var slice = window.BEZIVER_SLICE;
+            var since = doing ? ' while ' + doing : '';
+            var held = slice ? ' Longest step so far ' + Math.round(slice) + ' ms.' : '';
+            if (loaded) show(what ? 'Something went wrong' + since + ': ' + what + '.' + held
+                                  : 'Something went wrong' + since + '.' + held, true);
             else show(what ? 'This page did not load: ' + what + '. Reload to try again.'
                            : 'This page did not load. Reload to try again.');
         }, true);

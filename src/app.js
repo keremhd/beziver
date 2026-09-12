@@ -8,7 +8,7 @@ const SAMPLE = require('./sample.js');
 // Bumped whenever index.html and this file must ship together; the page
 // checks it so a stale bundle announces itself instead of silently doing
 // nothing. Keep in sync with window.BEZIVER_BUILD in index.html.
-const BUILD = 22;
+const BUILD = 23;
 
 // The text analyses under Diagnostics were written for the rewrite, not for a
 // person using the tool: they caught the folds, the oscillating control net
@@ -253,13 +253,14 @@ function scheduleRun(from) {
 
 function* runSteps(from) {
         const i = STAGES.indexOf(from);
-        if (i <= 0) yield* ensureInputSteps();
-        if (i <= 1) yield* runFitSteps();
+        if (i <= 0) { doing('reading the model'); yield* ensureInputSteps(); }
+        if (i <= 1) { doing('fitting the surface'); yield* runFitSteps(); }
         if (i <= 2 && LastFit) {
             // The warp is the product. When it cannot be built the rectangular
             // fit is still a usable answer, so take it automatically -- this is
             // a fallback, never a question put to the user.
             try {
+                doing('fitting the outline patch');
                 yield* runWarpSteps();
                 setFallback(false);
             } catch (e) {
@@ -307,7 +308,10 @@ function runFrom(from) {
 // that lands back here and steps the generator it is already inside.
 let stepping = false;
 
-function stepPipeline(deadline) {
+// `budgeted` says whether the deadline is a real one. Driven straight through
+// (no rAF, so no frames to spread over) the whole run is one "slice", and
+// recording that would make the figure mean nothing.
+function stepPipeline(deadline, budgeted) {
     if (!PipelineJob || stepping) return;
     stepping = true;
     const start = clock();
@@ -328,7 +332,11 @@ function stepPipeline(deadline) {
     } finally {
         stepping = false;
     }
-    SlicedMs += clock() - start;
+    const spent = clock() - start;
+    SlicedMs += spent;
+    // The stage names itself as it begins, so this is the stage that ran --
+    // or, across a boundary, the one that has just started.
+    if (budgeted) noteSlice(spent, typeof window !== 'undefined' ? window.BEZIVER_DOING : '');
     if (PipelineJob) return;
     running = false;
     setStatus();
@@ -1058,6 +1066,22 @@ const clock = () => (typeof performance !== 'undefined' && performance.now
 // How long a slice may hold the thread. A touch landing just after one starts
 // waits at most this long to be answered.
 const SLICE_MS = 8;
+
+// What the page is in the middle of, and the longest any one slice has
+// actually held the thread. A browser that stops a script reports it as a bare
+// "Script error." with no message, file or line, so without these the banner
+// has nothing to say about it. Read by the handler in index.html.
+let LongestSlice = 0;
+function doing(what) {
+    if (typeof window !== 'undefined') window.BEZIVER_DOING = what;
+}
+function noteSlice(ms, label) {
+    if (ms <= LongestSlice) return;
+    LongestSlice = ms;
+    if (typeof window === 'undefined') return;
+    window.BEZIVER_SLICE = ms;
+    window.BEZIVER_SLICE_AT = label || '';
+}
 let PreviewJob = null;
 
 function requestRedraw(what) {
@@ -1077,7 +1101,17 @@ function scheduleFrame() {
 
 function flushRedraw(deadline) {
     Pending.frame = false;
-    const until = deadline === undefined ? clock() + SLICE_MS : deadline;
+    const started = clock();
+    const until = deadline === undefined ? started + SLICE_MS : deadline;
+    // Each unit of work is timed against its own name. Timing the frame as a
+    // whole and labelling it with whatever ran last names the wrong one, which
+    // is worse than not naming it at all.
+    const timed = (label, fn) => {
+        doing(label);
+        const t0 = clock();
+        fn();
+        if (deadline === undefined) noteSlice(clock() - t0, label);
+    };
     try {
         // The frame in flight finishes before a newer request starts one.
         // Restarting on each request would mean a mesh too big to draw inside
@@ -1089,16 +1123,18 @@ function flushRedraw(deadline) {
             Pending.preview = false;
             PreviewJob = startPreview();
         }
-        if (PreviewJob && PreviewJob.step(until)) {
-            PreviewJob.finish();
-            PreviewJob = null;
-        }
+        if (PreviewJob) timed('drawing the model', () => {
+            if (PreviewJob.step(until)) {
+                PreviewJob.finish();
+                PreviewJob = null;
+            }
+        });
         // The right pane waits for the left to finish rather than interleaving
         // with it: two half-rate panes are worse than one settled and one
         // catching up, and it is cheap by comparison.
         if (!PreviewJob && Pending.result) {
             Pending.result = false;
-            drawResult();
+            timed('drawing the surface', drawResult);
         }
     } catch (e) {
         PreviewJob = null;
@@ -1108,8 +1144,9 @@ function flushRedraw(deadline) {
     // The pipeline gets whatever is left of the slice. It only runs when no
     // drag is in progress, so in practice the two never share a frame; sharing
     // one budget is what guarantees they could not add up to a long one.
-    stepPipeline(until);
-    if (PreviewJob || Pending.preview || Pending.result || PipelineJob) scheduleFrame();
+    stepPipeline(until, deadline === undefined);
+    if (PreviewJob || Pending.preview || Pending.result || PipelineJob) return scheduleFrame();
+    doing('');
 }
 
 // The mesh is rasterised in slices. A drag asks for a new frame far faster
