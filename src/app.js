@@ -8,7 +8,7 @@ const SAMPLE = require('./sample.js');
 // Bumped whenever index.html and this file must ship together; the page
 // checks it so a stale bundle announces itself instead of silently doing
 // nothing. Keep in sync with window.BEZIVER_BUILD in index.html.
-const BUILD = 23;
+const BUILD = 26;
 
 // The text analyses under Diagnostics were written for the rewrite, not for a
 // person using the tool: they caught the folds, the oscillating control net
@@ -244,11 +244,11 @@ function markStale(from) {
 function scheduleRun(from) {
     markStale(from);
     if (runTimer) clearTimeout(runTimer);
-    runTimer = setTimeout(() => {
+    runTimer = setTimeout(guard('starting a run', () => {
         runTimer = null;
         if (Dragging) return scheduleRun(from);
         runFrom(from);
-    }, 280);
+    }), 280);
 }
 
 function* runSteps(from) {
@@ -281,11 +281,8 @@ function* runSteps(from) {
         }
 }
 
-// A run is the longest thing this page does, so it is spent the way the mesh
-// is drawn: a slice at a time, out of the same budget, on the same frames.
-// A request arriving mid-run is remembered rather than dropped -- now that a
-// run spans frames, dropping it would leave the output stale with nothing to
-// come back and fix it.
+// A request arriving mid-run is remembered rather than dropped: now that a run
+// spans frames, dropping it would leave the output stale for good.
 let PipelineJob = null, pendingFrom = null;
 let SlicedMs = 0;              // main-thread time actually spent stepping
 
@@ -304,14 +301,11 @@ function runFrom(from) {
     scheduleFrame();
 }
 
-// A stage that asks for a redraw re-enters the frame loop, and without this
-// that lands back here and steps the generator it is already inside.
+// A stage that asks for a redraw re-enters the frame loop, which would land
+// back here and step the generator it is already inside.
 let stepping = false;
 
-// `budgeted` says whether the deadline is a real one. Driven straight through
-// (no rAF, so no frames to spread over) the whole run is one "slice", and
-// recording that would make the figure mean nothing.
-function stepPipeline(deadline, budgeted) {
+function stepPipeline(deadline) {
     if (!PipelineJob || stepping) return;
     stepping = true;
     const start = clock();
@@ -332,11 +326,7 @@ function stepPipeline(deadline, budgeted) {
     } finally {
         stepping = false;
     }
-    const spent = clock() - start;
-    SlicedMs += spent;
-    // The stage names itself as it begins, so this is the stage that ran --
-    // or, across a boundary, the one that has just started.
-    if (budgeted) noteSlice(spent, typeof window !== 'undefined' ? window.BEZIVER_DOING : '');
+    SlicedMs += clock() - start;
     if (PipelineJob) return;
     running = false;
     setStatus();
@@ -712,7 +702,7 @@ function installSlider(id, opts) {
         onChange();
     };
 
-    track.addEventListener('pointerdown', (e) => {
+    track.addEventListener('pointerdown', guard('grabbing a slider', (e) => {
         id_ = e.pointerId;
         if (track.setPointerCapture) {
             try { track.setPointerCapture(id_); } catch (_) { /* gone already */ }
@@ -721,12 +711,12 @@ function installSlider(id, opts) {
         if (input.focus) input.focus();   // the drag is ours; the keyboard is the input's
         if (opts.drag) Dragging = true;
         setFrom(e);
-    });
-    track.addEventListener('pointermove', (e) => {
+    }));
+    track.addEventListener('pointermove', guard('moving a slider', (e) => {
         if (e.pointerId !== id_) return;
         if (e.preventDefault) e.preventDefault();
         setFrom(e);
-    });
+    }));
     const drop = (e) => {
         if (e.pointerId !== id_) return;
         id_ = null;
@@ -737,8 +727,8 @@ function installSlider(id, opts) {
         Dragging = false;
         redrawPreviews();      // the settled frame, at full resolution
     };
-    track.addEventListener('pointerup', drop);
-    track.addEventListener('pointercancel', drop);
+    track.addEventListener('pointerup', guard('releasing a slider', drop));
+    track.addEventListener('pointercancel', guard('releasing a slider', drop));
 }
 
 installSlider('stl-water', {
@@ -1053,45 +1043,48 @@ const lambert = (ax, ay, az, bx, by, bz) => {
 
 // ------------------------------------------------- left pane: the model
 
-// Both previews rasterise every triangle in software, and a drag delivers
-// pointermove far faster than that finishes. Drawing per event, or even per
-// frame, hands the thread a backlog it never works off. Instead a request only
-// marks what is out of date, and the frames below draw it a slice at a time.
+// Both previews rasterise every triangle in software, slower than a drag
+// delivers pointermove. A request marks what is out of date; the frames below
+// draw it a slice at a time.
 const Pending = { preview: false, result: false, frame: false };
 // Named for what it is rather than `now`: the pinch handler already has a
 // local `now`, and one shadowing the other reads as a mistake.
 const clock = () => (typeof performance !== 'undefined' && performance.now
     ? performance.now() : Date.now());
 
-// How long a slice may hold the thread. A touch landing just after one starts
-// waits at most this long to be answered.
+// The longest a touch can wait to be answered.
 const SLICE_MS = 8;
 let ResultJob = null;
 
-// What the page is in the middle of, and the longest any one slice has
-// actually held the thread. A browser that stops a script reports it as a bare
-// "Script error." with no message, file or line, so without these the banner
-// has nothing to say about it. Read by the handler in index.html.
-let LongestSlice = 0;
+// What the page is in the middle of, so a fault can say where it happened.
+// Read by the handler in index.html.
 function doing(what) {
     if (typeof window !== 'undefined') window.BEZIVER_DOING = what;
 }
-function noteSlice(ms, label) {
-    if (ms <= LongestSlice) return;
-    LongestSlice = ms;
-    if (typeof window === 'undefined') return;
-    window.BEZIVER_SLICE = ms;
-    window.BEZIVER_SLICE_AT = label || '';
+// A throw in a frame callback or a pointer handler reaches nobody but the
+// browser, which strips it to a bare "Script error." Caught here it keeps its
+// message.
+function guard(label, fn) {
+    return function (a) {
+        try { return fn.call(this, a); } catch (e) { crashed(label, e); }
+    };
 }
+
+function crashed(label, e) {
+    console.error(label, e);
+    if (typeof window === 'undefined' || !window.__beziverBootError) return;
+    window.__beziverBootError('Something went wrong while ' + label + ': ' +
+        ((e && e.message) || String(e)) + '.', true);
+}
+
 let PreviewJob = null;
 
-// 'preview' (the default) is the left pane, 'result' the right one, 'both'
-// the pair. Turning the object moves both; a refit moves only the surface.
+// 'preview' (the default) is the left pane, 'result' the right, 'both' the
+// pair.
 function requestRedraw(what) {
     if (what !== 'result') Pending.preview = true;
     if (what === 'both' || what === 'result') Pending.result = true;
-    // Without rAF (the tests' DOM stub) there is no frame to wait for and
-    // nothing to spread the work across: draw it all, now.
+    // No rAF (the tests' DOM stub): nothing to spread the work across.
     if (typeof requestAnimationFrame !== 'function') return flushRedraw(Infinity);
     scheduleFrame();
 }
@@ -1099,74 +1092,56 @@ function requestRedraw(what) {
 function scheduleFrame() {
     if (Pending.frame || typeof requestAnimationFrame !== 'function') return;
     Pending.frame = true;
-    requestAnimationFrame(() => flushRedraw());
+    requestAnimationFrame(guard('drawing a frame', () => flushRedraw()));
 }
 
 function flushRedraw(deadline) {
     Pending.frame = false;
-    const started = clock();
-    const until = deadline === undefined ? started + SLICE_MS : deadline;
-    // Each unit of work is timed against its own name. Timing the frame as a
-    // whole and labelling it with whatever ran last names the wrong one, which
-    // is worse than not naming it at all.
-    const timed = (label, fn) => {
-        doing(label);
-        const t0 = clock();
-        fn();
-        if (deadline === undefined) noteSlice(clock() - t0, label);
-    };
+    const until = deadline === undefined ? clock() + SLICE_MS : deadline;
     try {
-        // The frame in flight finishes before a newer request starts one.
-        // Restarting on each request would mean a mesh too big to draw inside
-        // one slice was abandoned every time the finger moved, and the canvas
-        // would hold its last complete picture until the drag ended. So the
-        // newest request becomes the NEXT frame, and the cost is that the
-        // picture trails the finger by however long a frame takes.
+        // The frame in flight finishes first. Restarting on each request
+        // would abandon a mesh too big for one slice every time the finger
+        // moved, and nothing would reach the canvas until the drag ended.
         if (!PreviewJob && Pending.preview) {
             Pending.preview = false;
             PreviewJob = startPreview();
         }
-        if (PreviewJob) timed('drawing the model', () => {
+        if (PreviewJob) {
+            doing('drawing the model');
             if (PreviewJob.step(until)) {
                 PreviewJob.finish();
                 PreviewJob = null;
             }
-        });
-        // The right pane waits for the left to finish rather than interleaving
-        // with it: two half-rate panes are worse than one settled and one
-        // catching up, and it is cheap by comparison.
+        }
+        // The right pane waits for the left: two half-rate panes read worse
+        // than one settled and one catching up.
         if (!PreviewJob && !ResultJob && Pending.result) {
             Pending.result = false;
             ResultJob = startResult();
         }
-        if (!PreviewJob && ResultJob) timed('drawing the surface', () => {
+        if (!PreviewJob && ResultJob) {
+            doing('drawing the surface');
             if (ResultJob.step(until)) {
                 ResultJob.finish();
                 ResultJob = null;
             }
-        });
+        }
     } catch (e) {
         PreviewJob = ResultJob = null;
         Pending.preview = Pending.result = false;
         fail(e);
     }
-    // The pipeline gets whatever is left of the slice. It only runs when no
-    // drag is in progress, so in practice the two never share a frame; sharing
-    // one budget is what guarantees they could not add up to a long one.
-    stepPipeline(until, deadline === undefined);
+    // Whatever is left of the slice. One budget for both is what stops them
+    // adding up to a long frame.
+    stepPipeline(until);
     if (PreviewJob || ResultJob || Pending.preview || Pending.result || PipelineJob) {
         return scheduleFrame();
     }
     doing('');
 }
 
-// The mesh is rasterised in slices. A drag asks for a new frame far faster
-// than a big mesh can be drawn, and a single uninterrupted pass over a few
-// hundred thousand triangles is long enough for a browser to decide the page
-// has stopped answering and stop the script. A slice does what it can inside a
-// few milliseconds and hands the thread back. The canvas holds the last
-// finished frame until a new one is complete, so a half-drawn mesh is never
-// shown.
+// The canvas holds the last finished frame until a new one is complete, so a
+// half-drawn mesh is never shown.
 function startPreview() {
     if (!Mesh) return null;
     const N = previewSize('stl-canvas');
@@ -1208,9 +1183,7 @@ function startPreview() {
 
     let t = 0;
     return {
-        // True when the mesh is finished; false when the slice ran out of time
-        // and there is more to do. Reading the clock per triangle would cost
-        // more than a triangle does, so a slice is timed in batches.
+        // Reading the clock per triangle would cost more than a triangle.
         step(deadline) {
             let batch = 0;
             for (; t < V.length; t += 9) {
@@ -1230,8 +1203,7 @@ function startPreview() {
             }
             return true;
         },
-        // The cut plane goes on last, over a finished mesh, and the blit is
-        // the only moment the canvas changes.
+        // The cut plane goes on last, over a finished mesh.
         finish() {
             drawCutPlane(R, P, Mc, Mk, level);
             flushRaster(StlCtx, R);
@@ -1458,9 +1430,8 @@ const RESULT_STEPS = 56;
 // unclamped, since clamping z flattens the overshoot onto a plane.
 const RESULT_HEADROOM = 0.05;
 
-// Sliced like the mesh: at the top detail levels this is a few hundred
-// thousand tessellated triangles with a per-fragment overlay, and held in one
-// piece it is the longest thing left in a frame.
+// At the top detail levels this is a few hundred thousand tessellated
+// triangles with a per-fragment overlay.
 function startResult() {
     if (!Mesh || !ResultGeom || !Depth || !Depth.water || !Input) return null;
     const N = previewSize('warp-canvas');
@@ -1567,8 +1538,7 @@ function startResult() {
         return z01;
     };
 
-    // Sampling the surface, then drawing it: a row of each between clock
-    // readings, which is fine enough at every detail level and costs nothing.
+    // A row between clock readings: fine enough at every detail level.
     const sampleRow = (j) => {
         for (let i = 0; i <= S; i++) {
             const idx = j * (S + 1) + i;
@@ -1645,8 +1615,7 @@ function startResult() {
             }
             return true;
         },
-        // The grid goes over a finished surface, and the blit is the only
-        // moment the canvas changes.
+        // The grid goes over a finished surface.
         finish() {
             if (showGrid()) drawSurfaceGrid(R, P, surfaceAt, OUT);
             flushRaster(WarpCtx, R);
@@ -1729,24 +1698,24 @@ function installOrbit() {
         target = which; id = e.pointerId; lx = e.clientX; ly = e.clientY;
         Dragging = true;
     };
-    left.addEventListener('pointerdown', grab('object'));
-    right.addEventListener('pointerdown', grab('camera'));
+    left.addEventListener('pointerdown', guard('starting a drag', grab('object')));
+    right.addEventListener('pointerdown', guard('starting a drag', grab('camera')));
     const up = (e) => {
         if (e && id !== null && e.pointerId !== undefined && e.pointerId !== id) return;
         release();
     };
-    window.addEventListener('pointerup', up);
+    window.addEventListener('pointerup', guard('ending a drag', up));
     // A touch drag that leaves the canvas, or that the browser takes over,
     // ends as a cancel and never as an up. Without this the pane stays stuck
     // in its low-resolution drag frame.
-    window.addEventListener('pointercancel', up);
-    window.addEventListener('pointermove', (e) => {
+    window.addEventListener('pointercancel', guard('ending a drag', up));
+    window.addEventListener('pointermove', guard('turning the model', (e) => {
         if (!target || !Mesh) return;
         if (id !== null && e.pointerId !== undefined && e.pointerId !== id) return;
         const dx = e.clientX - lx, dy = e.clientY - ly;
         lx = e.clientX; ly = e.clientY;
         dragBy(target, dx, dy);
-    });
+    }));
 }
 installOrbit();
 
@@ -1779,7 +1748,7 @@ function installZoom() {
         // { passive: false } or the preventDefault() is ignored and the page
         // scrolls under the gesture. The listener is on the canvas alone, so
         // a wheel anywhere else still scrolls normally.
-        c.addEventListener('wheel', (e) => {
+        c.addEventListener('wheel', guard('zooming', (e) => {
             if (!Mesh) return;
             if (e.preventDefault) e.preventDefault();
             // deltaMode 1 is lines, 2 is pages; only 0 is already pixels.
@@ -1788,7 +1757,7 @@ function installZoom() {
             // A pinch reports much smaller deltas than a wheel notch for the
             // same intent, so it gets the larger constant.
             by(Math.exp(-d * (e.ctrlKey ? 0.01 : 0.0025)));
-        }, { passive: false });
+        }), { passive: false });
 
         // Touch pinch: two live pointers, and the ratio of their separation.
         const live = new Map();
@@ -1797,12 +1766,12 @@ function installZoom() {
             const p = [...live.values()];
             return p.length === 2 ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0;
         };
-        c.addEventListener('pointerdown', (e) => {
+        c.addEventListener('pointerdown', guard('starting a pinch', (e) => {
             if (e.pointerType !== 'touch') return;
             live.set(e.pointerId, { x: e.clientX, y: e.clientY });
             apart = spread();
-        });
-        c.addEventListener('pointermove', (e) => {
+        }));
+        c.addEventListener('pointermove', guard('pinching', (e) => {
             if (!live.has(e.pointerId)) return;
             live.set(e.pointerId, { x: e.clientX, y: e.clientY });
             const now = spread();
@@ -1810,20 +1779,19 @@ function installZoom() {
             if (e.preventDefault) e.preventDefault();
             by(now / apart);
             apart = now;
-        });
+        }));
         const drop = (e) => {
             if (!live.delete(e.pointerId)) return;
             apart = spread();
         };
-        c.addEventListener('pointerup', drop);
-        c.addEventListener('pointercancel', drop);
+        c.addEventListener('pointerup', guard('ending a pinch', drop));
+        c.addEventListener('pointercancel', guard('ending a pinch', drop));
     }
 }
 installZoom();
 
-// The settled frame goes through the same slicing as the moving ones: it is
-// the largest single draw there is -- full resolution, nothing skipped -- and
-// it is the least urgent, since the finger has already stopped.
+// The settled frame is the largest single draw there is, and the least
+// urgent.
 function redrawPreviews() {
     if (!Mesh) return;
     requestRedraw('both');
@@ -2133,8 +2101,7 @@ function fitOptions() {
     return { basis: FIT_BASIS, nx: n, ny: n, lambda: FIT_LAMBDA };
 }
 
-// Sliced like everything else downstream of a drag: yields sit where a stage
-// ends, so what carries across a pause is the locals already in scope.
+// Yields where a stage ends, so the locals in scope are the whole state.
 function* runFitSteps() {
     if (!Input) yield* ensureInputSteps();
     const { W, H, z, mask, contour } = Input;

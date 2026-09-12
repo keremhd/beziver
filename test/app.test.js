@@ -251,6 +251,23 @@ console.log('\nBuild handshake');
         globalThis.BEZIVER_READY !== undefined &&
         String(globalThis.BEZIVER_READY) === (htmlBuild || [])[1],
         'READY = ' + globalThis.BEZIVER_READY);
+    // A throw in a script from another origin is reported with everything
+    // stripped: no message, no file, no line. Nothing of this page's own can
+    // arrive that way, since app.js catches its own faults where they happen.
+    {
+        const handler = html.slice(html.indexOf("addEventListener('error'"),
+                                   html.indexOf('unhandledrejection'));
+        check('an error the browser will not describe is not reported as ours',
+            /stripped/.test(handler) && /if \(loaded && stripped\) return;/.test(handler));
+        check('but before load it still means the script never ran',
+            /This page did not load/.test(handler));
+        check('and a rejected promise is not left silent',
+            /unhandledrejection/.test(html));
+        check('faults this code can see are caught where they happen',
+            (appSrc.match(/guard\(/g) || []).length >= 10 &&
+            /function guard\(label, fn\)/.test(appSrc),
+            (appSrc.match(/guard\(/g) || []).length + ' guarded paths');
+    }
     check('the boot banner speaks plain language',
         !/npm run build|hard-reload|script\.js/i.test(
             html.slice(html.indexOf('__beziverBootError'), html.indexOf('</script>'))));
@@ -1565,13 +1582,7 @@ try {
         elements['scad-out'].value === sliced,
         elements['scad-out'].value === sliced ? 'identical' : 'differs');
 
-    // A browser that stops a script says only "Script error.", so what the
-    // page was in the middle of is the whole of the report.
-    check('the longest slice is recorded for the banner to quote',
-        typeof globalThis.BEZIVER_SLICE === 'number' && globalThis.BEZIVER_SLICE > 0,
-        Math.round(globalThis.BEZIVER_SLICE) + ' ms in "' +
-        globalThis.BEZIVER_SLICE_AT + '"');
-    const stages = /(?:doing|timed)\('([^']+)'/g;
+    const stages = /doing\('([^']+)'/g;
     const named = [];
     let mm;
     while ((mm = stages.exec(appSrc))) if (mm[1]) named.push(mm[1]);

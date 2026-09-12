@@ -228,12 +228,10 @@ function scoreCorners(pts, corners, D) {
 // from a few rotations of equally spaced corners, then coordinate-descend --
 // the boundary fit error is itself the right objective, since corners belong
 // where a single Bezier curve stops being able to follow the outline.
-// The corner search is the longest single computation in the pipeline: four
-// restarts, three refinement rounds, four corners and up to 28 trial positions
-// each, with four side curves fitted per trial. It is written as a generator
-// so a caller can spend it a slice at a time and leave the thread answerable
-// in between; chooseCorners() below runs it straight through for callers that
-// only want the answer.
+// The longest single computation in the pipeline: four restarts, three rounds,
+// four corners, up to 28 trials each, four side curves per trial. A generator
+// so a caller can spend it a slice at a time; chooseCorners() below runs it
+// straight through.
 function* chooseCornersSteps(pts, D, opts) {
     opts = opts || {};
     const n = pts.length;
@@ -277,7 +275,7 @@ function* chooseCornersSteps(pts, D, opts) {
     return { corners: best, searched: true, score: bestScore };
 }
 
-// Every generator here has one of these: the same computation, run to the end.
+// The same computation, run to the end.
 function drive(gen) {
     let r = gen.next();
     while (!r.done) r = gen.next();

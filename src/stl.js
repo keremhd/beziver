@@ -92,10 +92,9 @@ function transformVerts(verts, M, center) {
 // the result is what you would see looking straight down at the model.
 // Returns depths in model units, plus the scale factors needed to report
 // errors and emit OpenSCAD in those same units.
-// A generator for the same reason the corner search is one: at a few hundred
-// thousand triangles this is the longest stage of a pipeline run, and it
-// scales with the model rather than with any setting. depthRender() below runs
-// it straight through.
+// The one stage that scales with the model rather than with a setting: at a few
+// hundred thousand triangles it is the longest in a run. depthRender() below
+// runs it straight through.
 function* depthRenderSteps(verts, W, H, opts) {
     opts = opts || {};
     const margin = opts.margin === undefined ? 2 : opts.margin;
@@ -116,8 +115,7 @@ function* depthRenderSteps(verts, W, H, opts) {
 
     let batch = 0;
     for (let t = 0; t < verts.length; t += 9) {
-        // Reading a clock per triangle would cost more than a triangle; the
-        // caller decides how often a yield is worth acting on.
+        // Reading a clock per triangle would cost more than a triangle.
         if (++batch >= 512) { batch = 0; yield; }
         for (let k = 0; k < 3; k++) {
             px[k] = verts[t + k * 3] * s + ox;

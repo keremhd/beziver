@@ -8,7 +8,7 @@
     // but wires up nothing -- every control silently dead. Rather than leave
     // that to guesswork, the page states which build it expects and complains
     // if the script never initialises or reports a different one.
-    window.BEZIVER_BUILD = 23;
+    window.BEZIVER_BUILD = 26;
     (function () {
         var hideTimer = null;
         // A message the page did not survive stays, since nothing else on the
@@ -48,25 +48,33 @@
                 ? ' (' + String(ev.filename).replace(/^.*\//, '') + ':' +
                   ev.lineno + ':' + ev.colno + ')'
                 : '';
-            // A cross-origin script, or one the browser cut short, arrives as a
-            // bare "Script error." with no file or line: nothing to pass on.
+            // "Script error." with no file is what a browser reports for a
+            // throw in a script from another origin -- an extension, or one of
+            // the browser's own. Nothing of ours arrives that way: guard() in
+            // app.js catches this code's faults where they happen, with their
+            // message. Before load it still means the script never ran.
+            var stripped = /^Script error\.?$/.test(String(ev.message || '')) &&
+                           !ev.filename;
+            if (loaded && stripped) return;
             var what = ev.message
-                ? (/^Script error\.?$/.test(ev.message) && !ev.filename
-                    ? '' : ev.message + where)
+                ? (stripped ? '' : ev.message + where)
                 : ev.target && ev.target.src
                     ? 'could not fetch ' + ev.target.src
                     : '';
-            // A script the browser stopped arrives with nothing in it, so
-            // what the page was in the middle of is all there is to report.
             var doing = window.BEZIVER_DOING;
-            var slice = window.BEZIVER_SLICE;
             var since = doing ? ' while ' + doing : '';
-            var held = slice ? ' Longest step so far ' + Math.round(slice) + ' ms.' : '';
-            if (loaded) show(what ? 'Something went wrong' + since + ': ' + what + '.' + held
-                                  : 'Something went wrong' + since + '.' + held, true);
+            if (loaded) show(what ? 'Something went wrong' + since + ': ' + what + '.'
+                                  : 'Something went wrong' + since + '.', true);
             else show(what ? 'This page did not load: ' + what + '. Reload to try again.'
                            : 'This page did not load. Reload to try again.');
         }, true);
+        // A rejected promise never reaches the error listener above.
+        window.addEventListener('unhandledrejection', function (ev) {
+            var r = ev && ev.reason;
+            show('A background step failed' +
+                 (window.BEZIVER_DOING ? ' while ' + window.BEZIVER_DOING : '') + ': ' +
+                 ((r && r.message) || String(r)) + '.', true);
+        });
         window.addEventListener('load', function () {
             setTimeout(function () {
                 if (window.BEZIVER_READY === window.BEZIVER_BUILD) return;
