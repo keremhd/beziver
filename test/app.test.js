@@ -1120,9 +1120,13 @@ try {
     // the keyboard keeps working whatever the pointer does.
     check('it is driven from input, which is what arrow keys fire',
         !!(handlers['stl-water'] || {}).input);
-    check('and a drag is tracked by pointer, not left to the native range',
-        !!(handlers['stl-water'] || {}).pointerdown &&
-        !!(handlers['stl-water'] || {}).pointermove);
+    // The pointer never reaches the input: a native range answers the click a
+    // touch leaves behind by moving its own value.
+    check('and a drag is tracked on the track, never by the native range',
+        !!(handlers['water-track'] || {}).pointerdown &&
+        !!(handlers['water-track'] || {}).pointermove &&
+        !(handlers['stl-water'] || {}).pointerdown,
+        /pointer-events:\s*none/.test(html) ? 'input takes no pointer' : 'input still takes pointers');
 
     const camPre = rot().CamM, objPre = rot().ObjM;
     const [wlo, whi] = rot().zRange;
@@ -1144,16 +1148,16 @@ try {
             .test(elements['water-info'].textContent) &&
         elements['water-info'].className === 'show',
         elements['water-info'].textContent + ' [' + elements['water-info'].className + ']');
-    fire('stl-water', 'mouseenter');
+    fire('water-track', 'mouseenter');
     check('and hovering it is enough to see the figure',
         elements['water-info'].className === 'show');
 
     // The drag: the box is top 100, height 300, 7px of padding at each end, so
     // the travel runs from y=393 at the low end up to y=107 at the high one.
-    fire('stl-water', 'pointerdown', { pointerId: 1, clientY: 393 });
+    fire('water-track', 'pointerdown', { pointerId: 1, clientY: 393 });
     check('grabbing at the bottom of the travel is the low end',
         elements['stl-water'].value === '0', elements['stl-water'].value);
-    fire('stl-water', 'pointermove', { pointerId: 1, clientY: 250 });
+    fire('water-track', 'pointermove', { pointerId: 1, clientY: 250 });
     check('and the value follows the pointer up',
         Math.abs(Number(elements['stl-water'].value) - 500) <= 5,
         elements['stl-water'].value);
@@ -1165,17 +1169,17 @@ try {
     };
     check('and the grip is drawn where the finger is',
         Math.abs(gripAt() - 0.5) <= 0.01, elements['water-grip'].style.bottom);
-    fire('stl-water', 'pointermove', { pointerId: 1, clientY: 350 });
+    fire('water-track', 'pointermove', { pointerId: 1, clientY: 350 });
     check('and moves back down with it',
         Math.abs(gripAt() - 0.15) <= 0.02, elements['water-grip'].style.bottom);
     // Past the end of the strip, not off the control: the capture is the point.
-    fire('stl-water', 'pointermove', { pointerId: 1, clientY: 900 });
+    fire('water-track', 'pointermove', { pointerId: 1, clientY: 900 });
     check('a finger past the end of the strip stays on the slider',
         elements['stl-water'].value === '0', elements['stl-water'].value);
-    fire('stl-water', 'pointermove', { pointerId: 2, clientY: 250 });
+    fire('water-track', 'pointermove', { pointerId: 2, clientY: 250 });
     check('and a second pointer does not steer it',
         elements['stl-water'].value === '0', elements['stl-water'].value);
-    fire('stl-water', 'pointerup', { pointerId: 1, clientY: 900 });
+    fire('water-track', 'pointerup', { pointerId: 1, clientY: 900 });
     await sleep(900);
 } catch (e) {
     fail++;
@@ -1233,6 +1237,27 @@ console.log('\nDetail knob');
 try {
     const lines = (id) => elements[id].value.split('\n').length;
     const patches = (id) => (elements[id].value.match(/^  \[\[\[/gm) || []).length;
+
+    // The knob is dragged on its own track too: a native range is no more
+    // catchable across 8 stops than it is up the side of a canvas.
+    check('the detail knob is on a track of its own',
+        !!(handlers['detail-track'] || {}).pointerdown &&
+        !(handlers['detail'] || {}).pointerdown);
+    // The stub box is 44 wide from x=0, 7px of pad at each end.
+    fire('detail-track', 'pointerdown', { pointerId: 9, clientX: 7 });
+    check('the left end of the track is the coarsest level',
+        elements['detail'].value === '1', elements['detail'].value);
+    fire('detail-track', 'pointermove', { pointerId: 9, clientX: 37 });
+    check('and the right end the finest',
+        elements['detail'].value === '8', elements['detail'].value);
+    fire('detail-track', 'pointermove', { pointerId: 9, clientX: 22 });
+    check('and it snaps to the stops in between',
+        elements['detail'].value === '5', elements['detail'].value);
+    check('with the grip drawn at the level it set',
+        /\* 0\.5714/.test(elements['detail-grip'].style.left || ''),
+        elements['detail-grip'].style.left);
+    fire('detail-track', 'pointerup', { pointerId: 9, clientX: 22 });
+    await sleep(600);
 
     elements['detail'].value = '1';
     fire('detail', 'input');

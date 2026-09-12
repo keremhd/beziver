@@ -8,7 +8,7 @@ const SAMPLE = require('./sample.js');
 // Bumped whenever index.html and this file must ship together; the page
 // checks it so a stale bundle announces itself instead of silently doing
 // nothing. Keep in sync with window.BEZIVER_BUILD in index.html.
-const BUILD = 21;
+const BUILD = 22;
 
 // The text analyses under Diagnostics were written for the rewrite, not for a
 // person using the tool: they caught the folds, the oscillating control net
@@ -557,38 +557,35 @@ function afterCameraMove() {
     requestRedraw('both');
 }
 
-blockDrag(el('stl-water'));
-// The value reads on demand: it appears beside the thumb while the slider is
-// in use and fades when it is not. A slider with no readable value is a
-// regression; a permanent line of text is clutter.
-for (const ev of ['mouseenter', 'focus']) {
-    el('stl-water').addEventListener(ev, () => flashWaterInfo());
+blockDrag(el('water-track'));
+// The value reads on demand: it appears beside the grip while the slider is in
+// use and fades when it is not. A slider with no readable value is a
+// regression; a permanent line of text is clutter. The pointer lands on the
+// track and the focus on the input, so each watches for its own.
+el('water-track').addEventListener('mouseenter', () => flashWaterInfo());
+el('stl-water').addEventListener('focus', () => flashWaterInfo());
+
+// Where a value sits along its track, as a CSS length. The pad at each end is
+// the grip's own travel, so the extremes land on the ends rather than half a
+// grip past them; grip and readout both hang on their centres, so this is the
+// position of the value itself.
+const SLIDER_PAD = 7;
+function sliderOffset(f) {
+    return 'calc(' + SLIDER_PAD + 'px + (100% - ' + (2 * SLIDER_PAD) + 'px) * ' +
+           Math.max(0, Math.min(1, f)) + ')';
 }
 
-// Where the value sits along the bar, as a CSS length: PAD at each end is the
-// grip's own travel, so 0 and 1000 land on the ends rather than half a grip
-// past them. Both the grip and the readout hang on their centres, so this is
-// the position of the value itself.
-const WATER_PAD = 7;
-function waterOffset() {
-    const f = Math.max(0, Math.min(1, num('stl-water', 0) / 1000));
-    return 'calc(' + WATER_PAD + 'px + (100% - ' + (2 * WATER_PAD) + 'px) * ' + f + ')';
-}
-
-// The grip is ours to draw, so it is ours to move: this is what follows the
-// finger. Called from updateWaterInfo, which every path that changes the value
-// already goes through -- drag, arrow key, reset and load alike.
-function paintWaterGrip() {
-    const g = el('water-grip');
-    if (g.style) g.style.bottom = waterOffset();
-}
+// Each installed slider leaves its painter here, so the value changing by any
+// route -- drag, arrow key, reset, load -- can put the grip where it belongs.
+const SliderPaint = {};
+function paintSlider(id) { if (SliderPaint[id]) SliderPaint[id](); }
 
 let waterInfoTimer = null;
 function flashWaterInfo() {
     const n = el('water-info');
     updateWaterInfo();
     n.className = 'show';
-    if (n.style) n.style.bottom = waterOffset();
+    if (n.style) n.style.bottom = sliderOffset(num('stl-water', 0) / 1000);
     if (waterInfoTimer) clearTimeout(waterInfoTimer);
     waterInfoTimer = setTimeout(() => { n.className = ''; }, 1600);
 }
@@ -602,55 +599,75 @@ function onWaterInput() {
 
 el('stl-water').addEventListener('input', onWaterInput);
 
-// The cut-off is driven from pointer events, not by the native vertical range,
-// which is not dependably draggable: laid out horizontally inside the tall box
-// it answers a tap and nothing else. The capture also keeps the value with a
-// finger that has left the strip. The input listener above serves the keyboard.
-installWaterDrag();
-function installWaterDrag() {
-    const w = el('stl-water');
-    if (!w.addEventListener || !w.getBoundingClientRect) return;
-    let id = null;
-    const PAD = 7;   // matches the slider's own padding: the thumb's travel
+// Both sliders are driven from pointer events on a track of our own, with the
+// range input kept as the keyboard target and the accessible control. The
+// input takes no pointer at all: a native range moves its own value on the
+// click a touch leaves behind, which is a value nobody asked for, and it is
+// not laid out dependably enough along a vertical axis to follow a finger. The
+// pointer capture keeps the value with a finger that has left the track.
+function installSlider(id, opts) {
+    const input = el(id), track = el(opts.track), grip = el(opts.grip);
+    const { min, max, step, vertical, onChange } = opts;
 
-    const setFrom = (clientY) => {
-        const r = w.getBoundingClientRect();
-        const span = Math.max(1, r.height - 2 * PAD);
-        // Bottom of the travel is 0, top is 1000: the water rises as you drag up.
-        const t = 1 - (clientY - r.top - PAD) / span;
-        const v = String(Math.round(1000 * Math.max(0, Math.min(1, t))));
-        if (v === w.value) return;
-        w.value = v;
-        onWaterInput();
+    const paint = () => {
+        if (!grip.style) return;
+        const at = sliderOffset((num(id, min) - min) / (max - min || 1));
+        if (vertical) grip.style.bottom = at; else grip.style.left = at;
+    };
+    SliderPaint[id] = paint;
+    paint();
+
+    if (!track.addEventListener || !track.getBoundingClientRect) return;
+    let id_ = null;
+
+    const setFrom = (e) => {
+        const r = track.getBoundingClientRect();
+        const span = Math.max(1, (vertical ? r.height : r.width) - 2 * SLIDER_PAD);
+        // Up is more on a vertical track, right is more on a horizontal one.
+        const f = vertical ? 1 - (e.clientY - r.top - SLIDER_PAD) / span
+                           : (e.clientX - r.left - SLIDER_PAD) / span;
+        const raw = min + Math.max(0, Math.min(1, f)) * (max - min);
+        const v = String(min + Math.round((raw - min) / step) * step);
+        if (v === input.value) return;
+        input.value = v;
+        paint();
+        onChange();
     };
 
-    w.addEventListener('pointerdown', (e) => {
-        id = e.pointerId;
-        if (w.setPointerCapture) w.setPointerCapture(id);
-        // preventDefault drops the native handling, and with it the focus it
-        // would have given: the keyboard path needs it back.
+    track.addEventListener('pointerdown', (e) => {
+        id_ = e.pointerId;
+        if (track.setPointerCapture) {
+            try { track.setPointerCapture(id_); } catch (_) { /* gone already */ }
+        }
         if (e.preventDefault) e.preventDefault();
-        if (w.focus) w.focus();
-        Dragging = true;
-        setFrom(e.clientY);
-        flashWaterInfo();
+        if (input.focus) input.focus();   // the drag is ours; the keyboard is the input's
+        if (opts.drag) Dragging = true;
+        setFrom(e);
     });
-    w.addEventListener('pointermove', (e) => {
-        if (e.pointerId !== id) return;
+    track.addEventListener('pointermove', (e) => {
+        if (e.pointerId !== id_) return;
         if (e.preventDefault) e.preventDefault();
-        setFrom(e.clientY);
+        setFrom(e);
     });
     const drop = (e) => {
-        if (e.pointerId !== id) return;
-        id = null;
-        if (w.releasePointerCapture) { try { w.releasePointerCapture(e.pointerId); } catch (_) {} }
+        if (e.pointerId !== id_) return;
+        id_ = null;
+        if (track.releasePointerCapture) {
+            try { track.releasePointerCapture(e.pointerId); } catch (_) { /* gone already */ }
+        }
         if (!Dragging) return;
         Dragging = false;
         redrawPreviews();      // the settled frame, at full resolution
     };
-    w.addEventListener('pointerup', drop);
-    w.addEventListener('pointercancel', drop);
+    track.addEventListener('pointerup', drop);
+    track.addEventListener('pointercancel', drop);
 }
+
+installSlider('stl-water', {
+    track: 'water-track', grip: 'water-grip',
+    min: 0, max: 1000, step: 1, vertical: true, drag: true,
+    onChange: () => { onWaterInput(); flashWaterInfo(); },
+});
 
 // A 0-1000 slider position means nothing. The slider sets a height, so the
 // height is the figure that leads; the percentage is derived from it and the
@@ -661,7 +678,7 @@ function installWaterDrag() {
 // change how much of it is under. The number that must not move is the height.
 function updateWaterInfo() {
     const n = el('water-info');
-    paintWaterGrip();
+    paintSlider('stl-water');
     if (!Mesh) { n.textContent = 'Whole model'; return; }
     const ext = captureExtent();
     const kept = ext.hi[2] - Math.max(waterLevel(), ext.lo[2]);
@@ -963,6 +980,9 @@ const lambert = (ax, ay, az, bx, by, bz) => {
 // the state is by then, keeps the queue from growing past what the main thread
 // can answer. Without rAF (the tests' DOM stub) there is no frame to wait for.
 const Pending = { preview: false, result: false, frame: false };
+const now = () => (typeof performance !== 'undefined' && performance.now
+    ? performance.now() : Date.now());
+
 function requestRedraw(what) {
     Pending.preview = true;
     if (what === 'both') Pending.result = true;
@@ -972,13 +992,29 @@ function requestRedraw(what) {
     requestAnimationFrame(flushRedraw);
 }
 
+// On a mesh big enough that one redraw outlasts a frame, drawing every frame
+// leaves the thread nothing for the touches that are driving the drag, and a
+// browser that finds a page unresponsive for long enough stops the script. So
+// a redraw waits out a gap as long as the last one took, which holds the
+// drawing to half the thread however heavy the mesh is. The picture lags a
+// little while a big model turns; the page keeps answering.
+let drawMs = 0, drawnAt = 0;
+
 function flushRedraw() {
+    const start = now();
+    if (drawMs > 4 && start - drawnAt < drawMs &&
+        typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(flushRedraw);   // still pending, just not yet
+        return;
+    }
     const preview = Pending.preview, result = Pending.result;
     Pending.preview = Pending.result = Pending.frame = false;
     try {
         if (preview) drawPreview();
         if (result) drawResult();
     } catch (e) { fail(e); }
+    drawnAt = now();
+    drawMs = drawnAt - start;
 }
 
 function drawPreview() {
@@ -1774,6 +1810,7 @@ function detailParams() { return DETAIL[detailLevel() - 1]; }
 // constant at every level. The net is not.
 function updateDetailInfo() {
     const lvl = detailLevel();
+    paintSlider('detail');
     const src = el('scad-out').value;
     const rows = src.match(/^  \[\[\[.*$/gm) || [];
     const n = rows.length;
@@ -1786,7 +1823,10 @@ function updateDetailInfo() {
         : `Level ${lvl}/${DETAIL.length}`;
 }
 
-el('detail').addEventListener('input', () => { updateDetailInfo(); scheduleRun('fit'); });
+function onDetailInput() { updateDetailInfo(); scheduleRun('fit'); }
+el('detail').addEventListener('input', onDetailInput);
+installSlider('detail', { track: 'detail-track', grip: 'detail-grip',
+                          min: 1, max: DETAIL.length, step: 1, onChange: onDetailInput });
 
 // ============================================================ output scale
 
