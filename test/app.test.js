@@ -70,12 +70,12 @@ console.log('\nPage shape');
     check('no prose restating what the picture already shows',
         !/Drag to tip the model\.<\/b>|class="hint"/.test(html),
         (/<p class="hint"[^>]*>/.exec(html) || ['clean'])[0]);
-    check('but both canvases carry an accessible name saying what dragging does',
+    check('but both canvases have an accessible name',
         [...html.matchAll(/<canvas id="(stl|warp)-canvas"[^>]*>/g)].length === 2 &&
         [...html.matchAll(/<canvas id="(?:stl|warp)-canvas"[\s\S]{0,400}?>/g)]
             .every((m) => /aria-label="[^"]*[Dd]rag[^"]*"/.test(m[0])),
         'aria-labels on both previews');
-    check('the two reset buttons name the difference between the panes',
+    check('the two reset buttons are named apart',
         /id="reset-object"[^>]*>Reset model</.test(html) &&
         /id="reset-view"[^>]*>Reset view</.test(html));
     check('the drop zone offers both drop and choose',
@@ -388,7 +388,7 @@ try {
     check('the drop zone is not yet the compact bar',
         !/compact/.test(elements['drop-zone'].className));
     check('the water readout is plain language, not 0-1000',
-        /^Keeps the whole model$/.test(elements['water-info'].textContent) &&
+        /^Whole model$/.test(elements['water-info'].textContent) &&
         !/depth/i.test(elements['water-info'].textContent),
         elements['water-info'].textContent);
     check('the error colormap starts off', !pressed('show-errors') &&
@@ -396,7 +396,7 @@ try {
     // Turning it on before there is anything to compare against must say so,
     // not throw.
     setToggle('show-errors', true);
-    check('turning it on with no fit yet degrades to a note, and no bar',
+    check('no fit: a note, no bar',
         /no fit/i.test(elements['cmap-legend'].textContent) &&
         elements['cmap-bar'].className === 'hidden',
         elements['cmap-legend'].textContent);
@@ -427,7 +427,7 @@ try {
         /FIT ERROR/.test(elements['report-fit'].textContent) &&
         /END TO END/.test(elements['report-warp'].textContent) &&
         elements['status'].textContent === 'ready', elements['status'].textContent);
-    check('errors carry a metric unit, the same family as the size boxes',
+    check('errors carry a metric unit',
         /rms [\d.]+ (mm|\u00b5m)/.test(elements['report-fit'].textContent) &&
         !/grey levels|model units/.test(elements['report-fit'].textContent),
         (/  rms[^\n]*/.exec(elements['report-fit'].textContent) || [''])[0].trim());
@@ -442,7 +442,7 @@ console.log('\nOne output, copyable');
 try {
     check('there is a single user-facing output',
         /patches = \[/.test(elements['scad-out'].value) &&
-        /follows the traced outline/.test(elements['scad-out'].value));
+        /traced outline/.test(elements['scad-out'].value));
     check('it is the outline patch, not the rectangular fit',
         elements['scad-out'].value === elements['scad-warp'].value &&
         elements['scad-out'].value !== elements['scad-fit'].value);
@@ -469,7 +469,7 @@ try {
     check('and carries the same code', URL._last && URL._last.text === elements['scad-out'].value);
 
     check('the readout counts patches and control points',
-        /^Level \d of \d \u2014 \d+ patch(es)?, \d+\u00d7\d+ control points each$/
+        /^Level \d\/\d \u2014 \d+ patch(es)?, \d+\u00d7\d+ control points$/
             .test(elements['detail-info'].textContent),
         elements['detail-info'].textContent);
     check('the scale states where it came from',
@@ -555,7 +555,7 @@ try {
     let st = rot();
     check('the capture frame is the water frame in the object frame',
         same(st.CapM, mul(st.WaterM, st.ObjM)), 'CapM != WaterM * ObjM');
-    check('so the capture axis is the water normal in object coordinates',
+    check('capture axis is the water normal in object coords',
         same(st.CapM.slice(6), mul(st.WaterM, st.ObjM).slice(6)) &&
         !same(st.ObjM, [1, 0, 0, 0, 1, 0, 0, 0, 1]));
     await sleep(900);
@@ -587,11 +587,11 @@ try {
         same(rot().ObjM, [1, 0, 0, 0, 1, 0, 0, 0, 1]) &&
         same(rot().CamM, [1, 0, 0, 0, 1, 0, 0, 0, 1]) &&
         same(rot().WaterM, [1, 0, 0, 0, 1, 0, 0, 0, 1]));
-    check('and it puts the cut-off back where the model was loaded with it',
+    check('and the cut-off goes back to the loaded one',
         elements['stl-water'].value === waterAtLoad,
         elements['stl-water'].value + ' vs ' + waterAtLoad + ' at load');
     await sleep(900);
-    check('and it does recompute, because the capture axis came with it',
+    check('and it recomputes, the axis came with it',
         elements['scad-out'].value !== scadTilted &&
         elements['status'].textContent === 'ready',
         elements['scad-out'].value === scadTilted ? 'identical' : 'changed');
@@ -663,7 +663,7 @@ try {
     // slide arrives as a plain one. Both are zoom.
     const z2 = rot().zoom;
     wheel('warp-canvas', 40, { ctrlKey: true });
-    check('a trackpad pinch is a wheel event with ctrlKey, and zooms out',
+    check('trackpad pinch is a ctrlKey wheel, and zooms out',
         rot().zoom < z2, z2.toFixed(2) + ' -> ' + rot().zoom.toFixed(2));
 
     for (let i = 0; i < 60; i++) wheel('warp-canvas', -120);
@@ -693,7 +693,7 @@ try {
         rot().zoom === 1 && Math.abs(rot().viewScale - base.viewScale) < 1e-9,
         'zoom ' + rot().zoom);
 
-    // The §16 invariant survives: a left drag still may not change the scale.
+    // A left drag still may not change the scale.
     const scale = rot().viewScale;
     drag('stl-canvas', 26, -14);
     check('and a left drag still does not change the view scale',
@@ -741,7 +741,7 @@ try {
     check('nor does the view scale: no apparent zoom',
         after.viewScale === before.viewScale,
         before.viewScale + ' -> ' + after.viewScale);
-    check('the plane holds its place on screen while the mesh does not',
+    check('the plane holds its place, the mesh does not',
         planeSame(after.plane, before.plane) &&
         differing(leftBefore, pixels('stl-canvas')) > 500,
         differing(leftBefore, pixels('stl-canvas')) + ' px of mesh moved');
@@ -753,7 +753,7 @@ try {
     // standing water really does change how much of it is under.
     check('but the reported percentage recomputes',
         elements['water-info'].textContent !== readBefore &&
-        /^Keeps the top \d+\.\d\d mm \u2014 \d+% of the model$/
+        /^Top \d+\.\d\d mm \u2014 \d+% of the model$/
             .test(elements['water-info'].textContent),
         readBefore + '  ->  ' + elements['water-info'].textContent);
     check('and the height it names is still the slider\u2019s',
@@ -846,7 +846,7 @@ try {
         /\.preview \{[^}]*image-rendering: auto/.test(html) &&
         /canvas \{ image-rendering: pixelated/.test(html),
         'preview auto, diagnostics pixelated');
-    check('the backing store is the displayed box times devicePixelRatio',
+    check('backing store = displayed box x devicePixelRatio',
         L.width === 1024 && L.height === 1024 && Rt.width === 1024,
         L.width + 'x' + L.height + ' for 512 css @2x');
 
@@ -870,7 +870,7 @@ try {
     setBox(4000);
     fireWin('resize');
     await sleep(300);
-    check('and it is capped, so a maximised 4K window cannot ask for 8000 px',
+    check('and capped: a 4K window cannot ask for 8000 px',
         L.width === 1200, L.width + ' px');
 
     // A phone in the single-column layout: a full-width pane at devicePixelRatio
@@ -910,7 +910,7 @@ try {
     touchDrag('stl-canvas', 0, 30);
     check('and on the left pane it tips the model, not the camera',
         !same(rot().ObjM, objPre) && same(rot().CamM, camMid));
-    check('the pane tells the browser every drag on it is ours, not a scroll',
+    check('every drag on the pane is ours, not a scroll',
         /\.preview \{[^}]*touch-action: none/.test(html));
 
     // Two fingers are a pinch. Rotating off one of them spins the model while
@@ -924,7 +924,7 @@ try {
     two('pointerdown', 12, 140, 100);
     fireWin('pointermove', { pointerType: 'touch', pointerId: 12, isPrimary: false,
                              clientX: 260, clientY: 180, preventDefault: () => {} });
-    check('a second finger hands the gesture to the pinch and stops rotating',
+    check('a second finger hands over to the pinch',
         same(rot().CamM, camPinch) && same(rot().ObjM, objPinch));
     fireWin('pointerup', { pointerType: 'touch', pointerId: 11, clientX: 100, clientY: 100 });
     fireWin('pointerup', { pointerType: 'touch', pointerId: 12, clientX: 260, clientY: 180 });
@@ -939,11 +939,11 @@ try {
 
 console.log('\nThe view toggles are buttons on the canvas');
 try {
-    check('both are real buttons with a pressed state, not clickable divs',
+    check('real buttons with a pressed state, not divs',
         /<button id="show-grid"[^>]*aria-pressed="true"/.test(html) &&
         /<button id="show-errors"[^>]*aria-pressed="false"/.test(html),
         'markup');
-    check('and they sit inside the right canvas, with the reset and the bar',
+    check('and they sit inside the right canvas',
         html.indexOf('id="show-grid"') > html.indexOf('id="warp-canvas"') &&
         html.indexOf('id="show-grid"') < html.indexOf('id="detail"') &&
         !/<label class="check"/.test(html));
@@ -1007,7 +1007,7 @@ try {
         ' / ' + elements['cmap-lo'].textContent);
     // One definition of the error, one scale: the ends of the bar are the
     // 99th-percentile scale computeErrorField() coloured the surface by.
-    check('and those ends are the scale the surface colour actually uses',
+    check('and those ends are the colour scale',
         elements['cmap-hi'].textContent === '+' + fmtErr(rot().errorScale) &&
         elements['cmap-lo'].textContent === '\u2212' + fmtErr(rot().errorScale),
         elements['cmap-hi'].textContent + ' vs scale ' + rot().errorScale);
@@ -1017,7 +1017,7 @@ try {
         const d = bar.getContext().getImageData(0, 0, bar.width, bar.height).data;
         const at = (y) => { const i = 4 * (y * bar.width + 3); return [d[i], d[i+1], d[i+2]]; };
         const top = at(2), mid = at(bar.height >> 1), bot = at(bar.height - 3);
-        check('the strip runs warm at the top through neutral to cool at the bottom',
+        check('warm at the top, neutral, cool at the bottom',
             top[0] > top[2] + 40 && bot[2] > bot[0] + 40 &&
             Math.abs(mid[0] - mid[2]) < 30 && mid[0] > 180,
             top.join(',') + ' / ' + mid.join(',') + ' / ' + bot.join(','));
@@ -1080,8 +1080,8 @@ try {
     // The slider sets a HEIGHT, so the height leads and the percentage is
     // derived from the model's current extent. A percentage alone does not say
     // how much model is left, and it is no longer what the slider controls.
-    check('the readout leads with the height in mm, percentage derived',
-        /^Keeps the top \d+\.\d\d mm \u2014 5[456]% of the model$/
+    check('the readout leads with mm, percentage derived',
+        /^Top \d+\.\d\d mm \u2014 5[456]% of the model$/
             .test(elements['water-info'].textContent) &&
         !/depth/i.test(elements['water-info'].textContent),
         elements['water-info'].textContent);
@@ -1105,14 +1105,14 @@ try {
     const tag = /<input[^>]*id="stl-water"[^>]*>/.exec(html)[0];
     check('it is still a native range input with a label',
         /type="range"/.test(tag) && /aria-label="[^"]+"/.test(tag), tag.slice(0, 70));
-    check('and it is overlaid on the left canvas, not in a labelled row',
+    check('overlaid on the left canvas, not a labelled row',
         html.indexOf('id="stl-water"') > html.indexOf('id="stl-canvas"') &&
         html.indexOf('id="stl-water"') < html.indexOf('</div>', html.indexOf('id="stl-canvas"')) &&
         !/<span>Cut-off<\/span>/.test(html));
     check('the inline error moved onto the canvas with it',
         html.indexOf('id="err-water"') > html.indexOf('id="stl-canvas"') &&
         html.indexOf('id="err-water"') < html.indexOf('id="stl-info"'));
-    check('no hand-rolled slider: the app never listens for a drag on it',
+    check('no hand-rolled slider: no drag listener',
         !/stl-water'\).addEventListener\('(mouse|pointer)down'/.test(appSrc));
     // 'input' is the event a keyboard arrow raises as well as a drag, so
     // driving the pipeline off it is what makes the keyboard work at all.
@@ -1135,7 +1135,7 @@ try {
 
     // The figure is not permanent furniture, but it is one gesture away.
     check('the value reads out transiently, in mm, beside the thumb',
-        /^Keeps the top \d+\.\d\d mm \u2014 \d+% of the model$/
+        /^Top \d+\.\d\d mm \u2014 \d+% of the model$/
             .test(elements['water-info'].textContent) &&
         elements['water-info'].className === 'show',
         elements['water-info'].textContent + ' [' + elements['water-info'].className + ']');
@@ -1202,8 +1202,8 @@ try {
 
     elements['detail'].value = '1';
     fire('detail', 'input');
-    check('the knob says which level it is on before anything reruns',
-        /^Level 1 of 8/.test(elements['detail-info'].textContent),
+    check('the level shows before anything reruns',
+        /^Level 1\/8/.test(elements['detail-info'].textContent),
         elements['detail-info'].textContent);
     await sleep(600);
     // There are no nx/ny/degree fields any more, so the only evidence the knob
@@ -1266,7 +1266,7 @@ try {
     await sleep(900);
     check('the pipeline runs itself back to ready',
         elements['status'].textContent === 'ready', elements['status'].textContent);
-    check('and the whole table entry took effect, not just part of it',
+    check('and the whole table entry took effect',
         /control net 12 x 12/.test(elements['report-fit'].textContent) &&
         /degree {9}10 x 10/.test(elements['report-warp'].textContent),
         (/degree[^\n]*/.exec(elements['report-warp'].textContent) || [''])[0]);
@@ -1295,7 +1295,7 @@ try {
         elements['fallback-note'].textContent);
     check('the diagnostics still record why',
         /warp failed/.test(elements['report-warp'].textContent) &&
-        /fell back/.test(elements['sub-warp'].textContent),
+        /fallback/.test(elements['sub-warp'].textContent),
         elements['sub-warp'].textContent);
     check('the user is not shown an error for it',
         elements['err-out'].textContent === '' &&
@@ -1327,7 +1327,7 @@ try {
     // isolating a piece of a curved surface. It parks the cut-off itself, so
     // what the first-time user sees must be the outline patch fitted to a real
     // region of the stone, not the whole silhouette and not the fallback.
-    check('it selects a piece of the model, not all of it and not none of it',
+    check('it selects a piece, not all and not none',
         (() => {
             const w = +elements['stl-water'].value;
             return w > 0 && w < 1000;
@@ -1455,7 +1455,7 @@ try {
     // of the span) -> 48 px (0.2%); edge kink mean 1.38 -> 0.92 px, worst
     // 19 -> 8 px, rows kinking by over 3 px 45 of 308 (15%) -> 10 of 310 (3%).
     // Both thresholds below fail on the previous code.
-    check('the overlay fills the surface it is describing, without holes',
+    check('the overlay fills the surface, without holes',
         holes < 0.005 * span,
         (100 * holes / Math.max(1, span)).toFixed(1) + '% of the span unpainted');
     check('and its edge follows the surface, not the tessellation',

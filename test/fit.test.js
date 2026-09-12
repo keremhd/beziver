@@ -411,7 +411,7 @@ section('OpenSCAD emitter');
         lines(one) - nPatch(one) === lines(many) - nPatch(many) &&
         lines(one) - nPatch(one) < 40,
         (lines(one) - nPatch(one)) + ' fixed lines');
-    check('a single-patch output is comparable to a hand-written one',
+    check('a single-patch output is hand-written size',
         lines(one) < 40, lines(one) + ' lines');
 
     // splinesteps is per patch, so a single patch needs far more of them than
@@ -435,7 +435,7 @@ section('OpenSCAD emitter');
         (many.match(/vnf_vertex_array\(/g) || []).length === 3);
     check('the debug call does not draw the surface a second time',
         /showpatch = false/.test(many));
-    check('the net is scaled by list comprehension, not a non-uniform scale()',
+    check('scaled by list comprehension, not scale()',
         /surface = \[for \(p = patches\)/.test(one) && !/^scale\(/m.test(one));
 
     // The output is a closed shell: the same surface top and bottom, offset
@@ -448,10 +448,13 @@ section('OpenSCAD emitter');
     check('no CSG is emitted against the surface',
         !/^\s*(intersection|difference|union)\s*\(/m.test(many));
     check('the header says what the surface is',
-        /closed, printable solid/.test(one) && !/open surface/.test(one) &&
-        /follows the traced outline/.test(one) && /bounding box/.test(many));
-    check('the thickness line states what a slope costs',
-        /^thickness = [\d.]+;.*steepest slope/m.test(one));
+        /A closed solid/.test(one) && !/open surface/.test(one) &&
+        /traced outline/.test(one) && /bounding box/.test(many));
+    // The wall is thinnest where the surface is steepest, because the offset
+    // is vertical. That figure has to be on the thickness line, not left to
+    // be found on the printer.
+    check('the thickness line carries the min wall',
+        /^thickness = [\d.]+;.*min wall [\d.]+ mm/m.test(one));
     check('no NaN/undefined', !/NaN|undefined/.test(one) && !/NaN|undefined/.test(many));
 }
 

@@ -342,7 +342,7 @@ section('Control net conditioning');
     // control points reveal the problem. That is what the penalty is for.
     const raw = run(0);
     const reg = run(1e-6);
-    check('unregularised net does oscillate far outside the geometry',
+    check('unregularised net oscillates outside the geometry',
         raw.mx > 3, 'max |z| ' + raw.mx.toFixed(1) + ' on a 0..1 surface');
     check('smoothing keeps the control net near the geometry',
         reg.mx < 3, 'max |z| ' + reg.mx.toFixed(2));

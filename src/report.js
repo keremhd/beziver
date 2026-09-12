@@ -98,50 +98,34 @@ function fmt(v) {
     return v.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-// What the emitted surface is like where it matters for a vertical shell.
-// Sampled on the patch grid, in the physical frame the `size` line sets up.
+// Properties of the emitted surface, sampled on the patch grid in the physical
+// frame the `size` line sets up.
 //
-// `slope` is the steepest dz/d(horizontal). It matters because the shell is a
-// VERTICAL offset: nominal thickness t measures t*cos(theta) perpendicular to
-// a surface tilted by theta, so the steepest place is the thinnest wall.
+// `slope` is the steepest dz/d(horizontal). The shell is a VERTICAL offset, so
+// a nominal thickness t measures t*cos(theta) perpendicular to a surface
+// tilted by theta: the steepest place is the thinnest wall.
 //
-// `foldFraction` is the part of the surface where the (u,v) -> (x,y) map
-// reverses. That is the one thing that can break the offset's guarantee. Two
-// graphs of z = f(x,y) a constant apart in z cannot meet -- but only where the
-// surface IS a graph. Stage 1 always is: its control net's x,y are pinned to a
-// uniform grid, so Bernstein linear precision makes x = u and y = v exactly.
-// Stage 2 reparameterises onto the traced outline and CAN fold on a concave
-// one, and where it folds the sheet lies over itself in x,y, so the offset
-// copy can cut through it. The mesh stays edge-manifold either way -- every
-// edge still has exactly two faces -- so this is invisible to the manifold
-// check. It is not something to warn a user about at runtime -- they could
-// neither verify nor act on it. app.js falls back to the rectangular fit
-// instead, silently, whenever the warp's map reverses in its interior; this
-// function is here so the emitted geometry can be asserted fold-free in
-// verify:scad, where a failure has somewhere to go.
+// `foldFraction` is the share of the surface where the (u,v) -> (x,y) map
+// reverses, which is what breaks the closed-solid guarantee. Stage 1 never
+// folds: its control net's x,y are pinned to a uniform grid, so Bernstein
+// linear precision gives x = u and y = v exactly. Stage 2 reparameterises onto
+// the traced outline and can fold on a concave one, and there the sheet lies
+// over itself in x,y so the offset copy cuts through it. The mesh stays
+// edge-manifold either way, so the manifold check cannot see it. app.js falls
+// back to the rectangular fit whenever the interior reverses; this function
+// exists so verify:scad can assert the emitted geometry is fold-free.
 //
 // Orientation-agnostic, per warp.js foldStats: the sign of the summed
-// determinant is "forward", and reversals are counted against it. A hardcoded
+// determinant is "forward" and reversals are counted against it. A hardcoded
 // det <= 0 calls every mirrored map folded.
 //
 // The patch map is (u,v) -> (x,y,z); z as a function of x,y needs the chain
 // rule through that same 2x2 Jacobian.
-// How far inside the parameter square a reversal has to be before it counts
-// as the surface doubling back rather than the rim overhanging itself.
-// Measured, as the self-intersecting share of the emitted shell's footprint:
-//
-//   shape                     reversals >15% in    self-intersecting footprint
-//   14 procedural sample pebbles      0                 0.00% .. 0.05%
-//   peanut                            0                 0.54%
-//   clover                            0                 1.15%
-//   crescent                        119                 9.42%
-//   C ring                          194                13.29%
-//
-// Below the band, every fold sits in a thin ring at the edge and costs about a
-// percent of the footprint. Above it, the surface crosses itself through the
-// middle and the figure jumps by an order of magnitude. Nothing lands between.
-// A stricter rule that counted rim folds too would refuse every smooth blob,
-// which is the shape this tool exists for.
+
+// How deep inside the parameter square a reversal must be to count as the
+// surface doubling back rather than the rim overhanging itself. A fold at the
+// rim self-intersects a small fraction of the footprint; one through the
+// middle self-intersects an order of magnitude more.
 const DEEP_BAND = 0.15;
 
 function surfaceStats(patches, sizeX, sizeY, height) {
@@ -199,32 +183,24 @@ function surfaceStats(patches, sizeX, sizeY, height) {
     };
 }
 
-// Emit OpenSCAD. Kept deliberately short: this is a file a person pastes into
-// an editor, not documentation. One line per patch, so the file length tracks
-// the amount of surface detail asked for and nothing else.
+// Emit OpenSCAD. Short by design: this is a file someone opens in an editor,
+// not documentation. One line per patch.
 //
 // The output is a CLOSED SOLID, not a sheet. Both stages produce a
 // topologically rectangular grid of patches, so the surface is a quad mesh
-// with exactly four boundary edges: sample it into one seamless point mesh,
-// copy that mesh straight down by `thickness`, and skirt the two together
-// around the border. A constant-thickness shell that follows the fit on BOTH
-// faces -- which is what you want when the thing being mapped is concave and
-// the useful side is the underside.
+// with four boundary edges: sample it into one seamless point mesh, copy that
+// mesh down by `thickness`, skirt the two together around the border.
 //
-// The offset is in Z, deliberately, NOT along the surface normal. Two graphs
-// of z = f(x,y) separated by a constant in z cannot meet, for any t > 0 at any
-// curvature, so the solid is manifold and positive-volume with no special
-// cases and its volume is exactly t * (footprint area). A true normal offset
-// self-intersects wherever the radius of curvature drops below t -- precisely
-// in the concave regions this is for -- and removing those self-intersections
-// is exactly the thinking the user is not supposed to have to do. The honest
-// cost is that the wall measures t*cos(theta) perpendicular to a slope; the
-// emitted thickness line carries that number rather than leaving it to be
-// discovered on the printer.
+// The offset is in Z, not along the normal. Two graphs of z = f(x,y) a
+// constant apart cannot meet, for any t > 0 at any curvature, so the solid is
+// manifold and positive-volume with no special cases, and its volume is
+// t * (footprint area). A normal offset self-intersects wherever the radius of
+// curvature drops below t. The cost is that the wall measures t*cos(theta)
+// perpendicular to a slope; the thickness line carries that figure.
 //
-// Every join is at VNF level (vnf_vertex_array + vnf_join). It is NOT CSG. A
-// Bezier patch grid is an OPEN sheet, and CGAL cannot intersect or union an
-// open surface with a solid: it renders and exports nothing, silently.
+// Every join is at VNF level (vnf_vertex_array + vnf_join), NOT CSG. A Bezier
+// patch grid is an OPEN sheet, and CGAL cannot intersect or union one with a
+// solid: it renders and exports nothing, silently.
 function patchesToScad(patches, opts) {
     opts = opts || {};
     const sizeX = opts.sizeX || 100;
@@ -249,19 +225,16 @@ function patchesToScad(patches, opts) {
     pcols = Math.max(1, pcols);
     const prows = Math.max(1, Math.round(patches.length / pcols));
 
-    // Thick enough to survive a printer, scaled to the model so it is sensible
-    // at any size, and never zero -- a zero-thickness shell has no interior.
+    // Scaled to the model, and never zero: a zero-thickness shell has no
+    // interior.
     const thickness = opts.thickness !== undefined ? opts.thickness
         : Math.max(1, Math.round(height * 0.1 * 10) / 10);
     const surf = surfaceStats(patches, sizeX, sizeY, height);
     const thinnest = thickness / Math.hypot(1, surf.slope);
-    // Two perimeters at a 0.4 mm nozzle is the usual floor for a wall that
-    // survives handling. Below it the line says so, on the same line, so the
-    // file's shape never changes -- it is a warning, not a decision: the
-    // default still prints.
-    const note = thinnest < 0.8
-        ? `only ${fmt(round2(thinnest))} mm at the steepest slope - raise this`
-        : `${fmt(round2(thinnest))} mm at the steepest slope`;
+    // Below 0.8 mm the line flags itself. A warning, not a decision: the
+    // emitted default is unchanged.
+    const note = `min wall ${fmt(round2(thinnest))} mm` +
+        (thinnest < 0.8 ? ' - raise this' : '');
 
     const body = patches.map((p) =>
         '  [' + p.map((row) =>
@@ -270,16 +243,16 @@ function patchesToScad(patches, opts) {
     ).join(',\n');
 
     const what = opts.warped
-        ? 'its edge follows the traced outline'
-        : 'it covers the bounding box';
+        ? 'edge on the traced outline'
+        : 'covering the bounding box';
 
     return `// beziver: ${patches.length} Bezier patch${patches.length === 1 ? '' : 'es'}, ${what}.
-// A closed, printable solid. Paste it in and press F5.
+// A closed solid.
 include <BOSL2/std.scad>
 include <BOSL2/beziers.scad>
 
 size = [${fmt(sizeX)}, ${fmt(sizeY)}, ${fmt(height)}];  // width, depth, height
-thickness = ${fmt(thickness)};   // shell, straight down (${note})
+thickness = ${fmt(thickness)};   // vertical shell (${note})
 splinesteps = ${splinesteps};      // mesh subdivisions per patch
 show_control_net = false;
 
@@ -290,9 +263,8 @@ ${body}
 
 surface = [for (p = patches) [for (r = p) [for (q = r) v_mul(q, size)]]];
 
-// Sample the patch grid into one seamless mesh, copy it straight down by
-// thickness, and skirt the two together. Both faces follow the fit. Every
-// join is at mesh level: an open sheet cannot be intersected or unioned.
+// Top mesh, a copy offset down by thickness, skirted together. Joined as VNF,
+// not CSG: an open sheet cannot be intersected or unioned.
 function _i(k, n) = [for (i = [k:1:n]) i];
 function _rim(g) = let(r = len(g) - 1, c = len(g[0]) - 1) concat(g[0],
     [for (i = [1:r]) g[i][c]], [for (j = [c - 1:-1:0]) g[r][j]],

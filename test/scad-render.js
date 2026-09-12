@@ -32,16 +32,14 @@ const check = (n, c, e) => {
 
 // ------------------------------------------------------- manifoldness check
 
-// "It exported something" is not "it is printable". A sheet exports facets
-// too. What makes a mesh printable is that it is CLOSED: every edge is shared
-// by exactly two triangles, those two traverse it in opposite directions
-// (consistent winding), and the enclosed volume is positive rather than
-// inside-out. This is the assertion that would have caught the zero-facet
-// regression of HANDOFF 5.3 instantly, and it is the one that means the owner
-// can hit F6 and print the result.
+// "It exported something" is not "it is a solid". A sheet exports facets too.
+// Closed means: every edge is shared by exactly two triangles, those two
+// traverse it in opposite directions (consistent winding), and the enclosed
+// volume is positive rather than inside-out.
 //
-// Written against the exported STL rather than against anything beziver
-// computes, so it is checking OpenSCAD's actual output.
+// Written against the exported STL, not against anything beziver computes, so
+// it checks OpenSCAD's actual output.
+
 function meshCheck(buf) {
     const { verts, count } = STL.parseSTL(buf);
 
@@ -155,7 +153,7 @@ function footprintArea(patches, src, sz) {
 
 // ------------------------------------------------------ self-intersection
 
-// Edge-manifold is NOT printable. The shell is the surface plus a copy of it
+// Edge-manifold is not enough. The shell is the surface plus a copy of it
 // offset straight down, and that pair cannot meet -- but only where the
 // surface is a graph of z = f(x,y). Where the (u,v) -> (x,y) map folds, the
 // sheet lies over itself and the copy cuts through it, and the mesh stays
@@ -334,7 +332,7 @@ for (const [name, src] of Object.entries(files)) {
     const M = buf ? meshCheck(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
         : null;
 
-    // THE assertion. A sheet exports facets too; only a closed mesh prints.
+    // THE assertion. A sheet exports facets too; only a closed mesh is a solid.
     check(name + ': mesh is closed (every edge shared by exactly two faces)',
         !!M && M.boundary === 0 && M.overused === 0,
         M ? M.boundary + ' open edges, ' + M.overused + ' overused' : 'no stl');
@@ -463,7 +461,7 @@ check('both outputs reach a comparable total subdivision',
         cst.deepFolded + ' deep reversals of ' + cst.samples + ' samples');
     check('and its shell really does cut through itself', cov.frac > 0.01,
         (100 * cov.frac).toFixed(2) + '% of its footprint');
-    check('...which is why app.js falls back to the rectangular fit for it',
+    check('so app.js falls back to the rectangular fit',
         /fold\.deepFolded > 0/.test(
             fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8')));
 

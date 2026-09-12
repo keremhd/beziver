@@ -30,7 +30,7 @@ try {
 const el = (id) => {
     const e = document.getElementById(id);
     if (!e) throw new Error('missing element #' + id +
-        ' \u2014 this page and its script are out of sync');
+        ' \u2014 page and script out of sync');
     return e;
 };
 const ctx2d = (id, opts) => el(id).getContext('2d', opts);
@@ -55,39 +55,25 @@ let FileName = 'model.stl';
 // framing, and undoing half of it leaves a state the user never chose.
 let LoadWater = '0';
 
-// THREE rotations, each with exactly one owner. Keeping them separate is the
-// whole design; an earlier version had two and coupled them, and the coupling
-// is what made the water appear to move.
+// THREE rotations, each with exactly one owner. They must stay uncoupled: a
+// camera that counter-rotates with the model reads as the water sloshing.
 //
-//   ObjM    the model's orientation in the world. The LEFT drag turns this and
-//           nothing else. Tipping the object is the input gesture.
-//   WaterM  the cut-off plane's orientation in the world. Level, and it never
-//           turns -- the slider sets its HEIGHT, not its angle. It is identity
-//           and stays identity; it is named and used explicitly because the
-//           capture axis is derived from it, and a derivation that reads
-//           "water, expressed in the object's frame" says what it means.
+//   ObjM    the model in the world. The LEFT drag turns this and nothing else.
+//   WaterM  the cut-off plane in the world. Identity, always: the slider sets
+//           its height, not its angle. Named because the capture axis derives
+//           from it.
 //   CamM    the camera. The RIGHT drag turns this and nothing else. Shared by
 //           both panes.
 //
-// The capture axis is DERIVED, never dragged: capture space is the water frame
-// seen from the object, CapM = WaterM * ObjM. Its third row is the water normal
-// in object coordinates, which is exactly the orthographic axis depthRender
-// projects along. Tip the object and the axis follows; move the camera and
-// nothing at all happens to the pipeline.
+// The capture axis is DERIVED, never dragged: CapM = WaterM * ObjM, capture
+// space being the water frame seen from the object. Its third row is the water
+// normal in object coordinates, the axis depthRender projects along. Tip the
+// object and the axis follows; move the camera and the pipeline is untouched.
 //
-// A previous round held the camera fixed RELATIVE TO THE CAPTURE FRAME during a
-// left drag so the plane would not move on screen. That keeps the plane
-// screen-static at the cost of physically swinging the camera through the
-// world, and the eye tracks the world: it reads as the water sloshing. Real
-// standing water is world-static, not screen-static. Nothing counter-rotates
-// now; the water simply never moves.
-//
-// All three are 3x3 rotation matrices, not yaw/pitch/roll triples. The drags
-// compose rotations (see installOrbit), and Euler angles do not compose by
-// adding and subtracting components: doing it that way cancels cleanly for a
-// horizontal drag and visibly does not for a diagonal one. Matrices have no
-// such seam and no gimbal lock, and nothing downstream ever wanted the angles
-// anyway -- depthRender takes transformed vertices.
+// 3x3 matrices, not yaw/pitch/roll. The drags compose rotations (installOrbit),
+// and Euler angles do not compose by adding components: that cancels cleanly
+// for a horizontal drag and visibly fails for a diagonal one. depthRender takes
+// transformed vertices, so nothing downstream wants angles.
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 let ObjM = IDENTITY.slice();       // model -> world
 let WaterM = IDENTITY.slice();     // world -> water (level; the slider is height)
@@ -116,20 +102,14 @@ const rotY = (a) => [Math.cos(a), 0, Math.sin(a), 0, 1, 0, -Math.sin(a), 0, Math
 // so the preview overlay does not recompute (and re-sort) it every drag frame.
 let ErrField = null;   // { err: Float64Array, scale: number }
 
-// Resolution of the previews. Deliberately not autoResolution(): that number
-// sizes the pipeline's raster, this one is redrawn on every mouse-move.
+// Resolution of the previews. Not autoResolution(): that sizes the pipeline's
+// raster, this one is redrawn on every mouse-move. The backing store matches
+// the displayed size times devicePixelRatio, so nothing is upscaled.
 //
-// It used to be a flat 256 px stretched to whatever CSS box the canvas got,
-// which is an upscale on any window and a 4x-per-axis upscale on a HiDPI
-// screen -- the previews looked permanently soft, and `image-rendering:
-// pixelated` was quietly making the best of it. The backing store now matches
-// the displayed size times devicePixelRatio.
-//
-// But this rasteriser runs per drag frame and its cost is per fragment, so
-// simply raising the constant makes dragging crawl: 256 -> 1000 px is 15x the
-// fill work. Progressive refinement instead -- reduced scale while a drag is in
-// flight, full resolution the moment it settles. Nobody is studying pixel
-// detail while they rotate something.
+// Cost is per fragment and this runs per drag frame, so raising the constant
+// makes dragging crawl: 256 -> 1000 px is 15x the fill work. Progressive
+// refinement instead: reduced scale during a drag, full resolution once it
+// settles.
 const PREVIEW_MIN = 192;
 const PREVIEW_MAX = 1200;      // a maximised 4K window must not ask for 4000px
 const PREVIEW_DRAG = 384;      // ... and a drag frame must not ask for 1024
@@ -180,20 +160,17 @@ function num(id, dflt) {
 }
 
 // ================================================== settled, not knobs
-// These were all controls once. None of them is a decision the person making a
-// printable surface can meaningfully make, so the app makes it. They are still
-// passed through the same option objects fit.js / warp.js already accept --
-// nothing downstream changed, the choice just stopped being a question.
+// These were all controls once. None is a decision a user can meaningfully
+// make, so the app makes it. Still passed through the option objects
+// fit.js / warp.js already accept.
 
 // Cubic B-spline, always. The alternative (single-patch Bernstein) is worse at
 // every detail level above 1 and the only way to want it is to already know
 // what C2 continuity is.
 const FIT_BASIS = 'bspline';
 
-// Contour pixels get weighted up so the fit does not drift at the outline,
-// which is exactly where stage 2 hands it to the boundary curves. The report
-// used to tell the user to raise this when boundary rms ran past 2x interior;
-// if the app knows the rule, the app applies it. 3 px band, 3x weight.
+// Contour pixels are weighted up so the fit does not drift at the outline,
+// where stage 2 hands it to the boundary curves. 3 px band, 3x weight.
 const EDGE_BAND = 3;
 const EDGE_WEIGHT = 3;
 
@@ -309,8 +286,7 @@ function setFallback(on) {
     usingFallback = on;
     const n = el('fallback-note');
     if (on) {
-        n.textContent = 'The outline could not be followed, so the surface ' +
-            'covers a rectangle around the model instead.';
+        n.textContent = 'Outline failed \u2014 fitted a rectangle instead.';
         n.className = '';
     } else {
         n.textContent = '';
@@ -337,7 +313,7 @@ function setStatus() {
     if (DEBUG) el('sub-warp').textContent =
         state.warp !== 'ok' ? ''
         : LastWarp ? `degree ${LastWarp.w.degree}, rms ${fe(LastWarp.e2e)}`
-        : 'failed - fell back to the rectangular fit';
+        : 'fallback: rectangular fit';
 }
 
 // Errors belong next to the control that caused them. `e.where` names the
@@ -581,10 +557,9 @@ function afterCameraMove() {
 }
 
 blockDrag(el('stl-water'));
-// Reading the value is on demand, not permanent: the figure appears beside the
-// thumb while the slider is in use and fades when it is not. A slider with no
-// way to read its value would be a regression, and a line of text that is
-// always there is what the owner asked to be rid of.
+// The value reads on demand: it appears beside the thumb while the slider is
+// in use and fades when it is not. A slider with no readable value is a
+// regression; a permanent line of text is clutter.
 for (const ev of ['mouseenter', 'focus']) {
     el('stl-water').addEventListener(ev, () => flashWaterInfo());
 }
@@ -617,14 +592,14 @@ el('stl-water').addEventListener('input', () => {
 // change how much of it is under. The number that must not move is the height.
 function updateWaterInfo() {
     const n = el('water-info');
-    if (!Mesh) { n.textContent = 'Keeps the whole model'; return; }
+    if (!Mesh) { n.textContent = 'Whole model'; return; }
     const ext = captureExtent();
     const kept = ext.hi[2] - Math.max(waterLevel(), ext.lo[2]);
     const total = Math.max(1e-12, ext.hi[2] - ext.lo[2]);
     const pct = Math.round(100 * Math.max(0, kept) / total);
     n.textContent = kept <= 0
-        ? 'Nothing left above the cut-off'
-        : `Keeps the top ${kept.toFixed(2)} mm \u2014 ${pct}% of the model`;
+        ? 'Nothing above the cut-off'
+        : `Top ${kept.toFixed(2)} mm \u2014 ${pct}% of the model`;
 }
 
 // Depth render along the CAPTURE axis + water threshold + commit as the height
@@ -652,7 +627,7 @@ function captureDepth() {
 
     if (water.above < 64) {
         throw where('water', new Error(
-            'Almost nothing is above the cut-off \u2014 lower it.'));
+            'Too little above the cut-off. Lower it.'));
     }
     commitDepth(water);
 }
@@ -671,7 +646,7 @@ function commitDepth(water) {
         // Real model dimensions: the normalised patch square spans exactly
         // these many model units in x and y, and this much relief in z.
         sizeX: Depth.modelWidth, sizeY: Depth.modelHeight, height: water.span,
-        scaleNote: 'From the STL. Edit any of them to resize the output.',
+        scaleNote: 'From the STL. Edit to resize.',
     };
 
     // preview only -- the fit reads Input.z, not these pixels
@@ -835,17 +810,17 @@ function meshRadius() {
                             Mesh.bounds.size[2]) || 1;
 }
 
-// One camera for both panes, at one fixed scale -- so orbiting never resizes
-// anything, tipping the model never resizes anything, and the fitted surface
-// comes out the same size as the model it was fitted to.
-// Zoom is a property of the SHARED camera, exactly like its orientation: one
-// value, applied to both panes, and a gesture on either canvas moves both.
-// Per-pane zoom would break the thing §15.4 is for -- the surface comes out the
-// same size, in the same place, as the model it was fitted to, so the two panes
-// read as one scene seen from one place.
+// One camera for both panes, at one fixed scale, so neither orbiting nor
+// tipping ever resizes anything and the fitted surface comes out the size of
+// the model it was fitted to.
+//
+// Zoom is a property of that shared camera, like its orientation: one value
+// applied to both panes, and a gesture on either canvas moves both. Per-pane
+// zoom would break the point of it, which is that the two panes read as one
+// scene seen from one place.
 //
 // It multiplies the projector's scale and nothing else. `rad` stays the world
-// radius, because the one thing derived from it that is not a screen size is
+// radius: the one thing derived from it that is not a screen size is
 // drawSurfaceGrid's depth bias, which is in world units and must not move.
 const ZOOM_MIN = 0.4, ZOOM_MAX = 8;
 let Zoom = 1;
@@ -1101,35 +1076,25 @@ function drawCutPlane(R, P, Mc, Mk, level) {
     drawWaterGrid(R, pt, inner, outer);
 }
 
-// A flat translucent disc seen edge-on gives the eye nothing to fix on: no
-// texture, so no parallax, so no sense of which way it is lying. Its silhouette
-// was the only orientation cue, which is why a silhouette that changed with the
-// model was so confusing. Converging grid lines read as a receding plane at a
-// glance and keep doing so from any camera angle.
+// A flat translucent disc seen edge-on has no texture, so no parallax, so no
+// sense of which way it is lying. Converging grid lines read as a receding
+// plane from any camera angle.
 //
-// Thin, solid, neutral grey: the ground-plane grid of every CAD and 3D tool.
-// That is the whole reason for it -- it is recognised rather than read, so it
-// says "level reference surface" without anyone having to work it out. It was
-// briefly dashed and blue-tinted, which turned furniture into an annotation
-// that needed interpreting.
+// Thin, solid, neutral grey: the ground-plane grid of every CAD tool, so it is
+// recognised rather than read.
 //
-// It still has to be told apart from the control grid on the fitted surface,
-// which the eye often sees at the same time. Both are solid; they are separated
-// by WEIGHT and CONTRAST instead of style. The control grid is dark and firm --
-// it halves the pixel under it, on a light surface. This one is the lighter and
-// quieter of the two: a pale grey at a fifth alpha over a dark surface. The
-// loud one is the one that carries data.
+// It has to be told apart from the control grid on the fitted surface, often
+// visible at the same time. Both are solid, separated by WEIGHT and CONTRAST,
+// not style: the control grid is dark and firm on a light surface, this one a
+// pale grey at a fifth alpha over a dark one. The loud one carries data.
 //
 // Depth-tested against the model, so the object occludes the lines behind it.
-// That occlusion is the strongest depth cue on the pane and it is free.
 function drawWaterGrid(R, pt, inner, outer) {
     const g = waterGridSpec();
     const N = R.N;
     const rgb = GRID_RGB;
-    // Two samples per pixel at whatever resolution this frame is, so the lines
-    // stay solid instead of breaking into dots as the raster grows.
-    // Zoom stretches the same world span over more pixels, so the sample
-    // rate has to follow it or the grid lines break into dots.
+    // Two samples per pixel at this frame's resolution, zoom included, or the
+    // lines break into dots.
     const step = outer / (2 * N * Zoom);
 
     const mark = (u, v) => {
@@ -1160,12 +1125,9 @@ function drawWaterGrid(R, pt, inner, outer) {
     }
 }
 
-// The capture-direction arrow that used to be drawn over this pane is gone. It
-// was an annotation with no legend, in a pane that has to read as harmless
-// before the user has found anything, and it was redundant: "which way is up
-// out of the water" is already told by the plane the model is standing in and
-// by the blue on everything under it. If the direction ever needs stating
-// again, state it in words next to the slider, not as a glyph on the picture.
+// No capture-direction arrow on this pane. The plane the model stands in and
+// the blue below it already say which way is up. If the direction ever needs
+// stating, state it next to the slider, not as a glyph on the picture.
 
 // ---------------------------------------------- right pane: the result
 // The product, rendered as a solid from the same camera and sitting in the same
@@ -1460,9 +1422,8 @@ installOrbit();
 // reading two pointers apart.
 //
 // On a Mac trackpad a two-finger slide arrives as a `wheel` event and a pinch
-// arrives as a `wheel` event with ctrlKey set -- the browser's own convention,
-// not a hack. Both mean zoom here, which is what the owner asked for, and a
-// mouse wheel then works with no extra case.
+// as a `wheel` with ctrlKey set: the browser's own convention. Both mean zoom
+// here, so a mouse wheel works with no extra case.
 //
 // Zoom is about the pane CENTRE, not the pointer. Anchored zoom needs a pan
 // offset, and with no pan gesture to go with it a user could zoom into a corner
@@ -1668,7 +1629,7 @@ function updateLegend(overlay) {
     if (show) drawColorBar(overlay.scale);
     el('cmap-bar').className = show ? '' : 'hidden';
     // The bar says everything except what to do when there is nothing to show.
-    el('cmap-legend').textContent = (on && !overlay) ? 'No fit yet.' : '';
+    el('cmap-legend').textContent = (on && !overlay) ? 'No fit' : '';
 }
 
 // ================================================================== detail
@@ -1695,16 +1656,12 @@ function detailLevel() {
     return Math.max(1, Math.min(DETAIL.length, Math.round(num('detail', 5))));
 }
 
-// The knob IS the control-point count. It used to write into three number
-// fields in the diagnostics pane, which were then read back; they are gone, so
-// it reads straight off the table.
+// The knob IS the control-point count, read straight off the table.
 function detailParams() { return DETAIL[detailLevel() - 1]; }
 
-// The line count used to stand in for "how much did the knob do", and it
-// could not: the emitter puts a whole patch on one line, and the normal
-// (warped) output is always exactly one patch. So the figure was the same 38
-// at every level. What the knob actually moves there is the patch's degree, so
-// report the control net -- it changes at every level, in both modes.
+// Report the control net, not the line count: the emitter puts a whole patch
+// on one line and the warped output is always one patch, so line count is
+// constant at every level. The net is not.
 function updateDetailInfo() {
     const lvl = detailLevel();
     const src = el('scad-out').value;
@@ -1714,9 +1671,9 @@ function updateDetailInfo() {
     const pts = n ? (rows[0].match(/\[-?[\d.]/g) || []).length : 0;
     const side = Math.round(Math.sqrt(pts));
     el('detail-info').textContent = src
-        ? `Level ${lvl} of ${DETAIL.length} \u2014 ${n} patch${n === 1 ? '' : 'es'}, ` +
-          `${side}\u00d7${side} control points each`
-        : `Level ${lvl} of ${DETAIL.length}`;
+        ? `Level ${lvl}/${DETAIL.length} \u2014 ${n} patch${n === 1 ? '' : 'es'}, ` +
+          `${side}\u00d7${side} control points`
+        : `Level ${lvl}/${DETAIL.length}`;
 }
 
 el('detail').addEventListener('input', () => { updateDetailInfo(); scheduleRun('fit'); });
@@ -1728,7 +1685,7 @@ el('detail').addEventListener('input', () => { updateDetailInfo(); scheduleRun('
 function refreshExportSizes() {
     if (!Input) return;
     if (sizeTouched) {
-        el('size-src').textContent = 'Your sizes. Load the file again to restore the STL\u2019s.';
+        el('size-src').textContent = 'Your sizes. Reload the file to restore.';
         return;
     }
     el('size-x').value = String(+Input.sizeX.toFixed(4));
@@ -1787,7 +1744,7 @@ function copyNote(msg, bad) {
 
 function copyScad() {
     const text = el('scad-out').value;
-    if (!text) return copyNote('Nothing to copy yet.', true);
+    if (!text) return copyNote('Nothing to copy', true);
     const nav = typeof navigator !== 'undefined' ? navigator : null;
     if (nav && nav.clipboard && nav.clipboard.writeText) {
         nav.clipboard.writeText(text).then(() => copyNote('Copied'), () => legacyCopy(text));
@@ -1807,7 +1764,7 @@ function legacyCopy(text) {
             ok = document.execCommand('copy');
         }
     } catch (e) { ok = false; }
-    copyNote(ok ? 'Copied' : 'Press Cmd/Ctrl+C to copy \u2014 the code is selected.', !ok);
+    copyNote(ok ? 'Copied' : 'Code selected \u2014 press Cmd/Ctrl+C', !ok);
 }
 
 function scadFileName() {
@@ -1816,7 +1773,7 @@ function scadFileName() {
 
 function downloadScad() {
     const text = el('scad-out').value;
-    if (!text) return copyNote('Nothing to download yet.', true);
+    if (!text) return copyNote('Nothing to download', true);
     if (typeof document === 'undefined' || !document.createElement ||
         typeof Blob === 'undefined' || typeof URL === 'undefined') return;
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
@@ -1862,10 +1819,7 @@ function runFit() {
 
     drawSurface(grid);
     emitScad();
-    // A new fit is a new error field. This used to happen as a side effect of
-    // drawing the (now deleted) Advanced error canvas; without it the cache
-    // survived a refit and the surface was coloured -- and the bar labelled --
-    // from the previous one.
+    // A new fit is a new error field; the cache must not survive a refit.
     ErrField = null;
 
     const dof = fit.Nx * fit.Ny;
@@ -1878,24 +1832,24 @@ function runFit() {
         'FIT ERROR inside mask',
         `  rms ${fe(st.rms)}    mae ${fe(st.mae)}    p95 ${fe(st.p95)}` +
         `    max ${fe(st.max)}    bias ${st.bias >= 0 ? '+' : ''}${fe(st.bias)}`,
-        `  rms is ${(100 * st.rms / uScale()).toFixed(2)}% of full relief;` +
-            `  ${(st.n / dof).toFixed(0)} pixels per DOF`,
+        `  rms ${(100 * st.rms / uScale()).toFixed(2)}% of relief,` +
+            ` ${(st.n / dof).toFixed(0)} px/DOF`,
         '',
-        'CONTOUR LIFT  (stage 2 boundary reliability)',
+        'CONTOUR LIFT',
         contour.length
             ? `  ${contour.length} outline pts    rms ${fe(lift.rms)}    max ${fe(lift.max)}`
             : '  no outline traced',
         contour.length && lift.rms > 2 * st.rms
-            ? '  ! boundary error exceeds 2x the interior rms'
-            : '  boundary error is in line with the interior fit',
+            ? '  ! boundary error over 2x the interior rms'
+            : '',
         '',
-        'EXTRAPOLATION outside the mask (z is 0..1 inside)',
+        'EXTRAPOLATION outside the mask  (z is 0..1 inside)',
         st.extrapMin === null
-            ? '  none - the mask covers the whole rectangle'
-            : `  z range [${st.extrapMin.toFixed(2)}, ${st.extrapMax.toFixed(2)}]` +
+            ? '  none'
+            : `  z range ${st.extrapMin.toFixed(2)} .. ${st.extrapMax.toFixed(2)}` +
               (Math.max(-st.extrapMin, st.extrapMax - 1) > 1
-                  ? '   ! wild - do not trim against this'
-                  : '   tame - safe to trim against the outline'),
+                  ? '   ! unbounded'
+                  : '   bounded'),
     ].join('\n');
 }
 
@@ -1917,40 +1871,24 @@ function runWarp() {
     });
     const tWarp = performance.now() - t0;
 
-    // A fold is the one thing that can make the emitted solid unusable. The
-    // output is a shell: the surface, and a copy of it offset straight down.
-    // Two graphs of z = f(x,y) a constant apart cannot meet -- but only where
-    // the surface IS a graph. Where the (u,v) -> (x,y) map reverses, the sheet
-    // lies over itself and the offset copy cuts through it. The result is
-    // still edge-manifold, so nothing downstream notices; it is simply a bad
-    // surface.
+    // The output has to be a closed solid. It is a shell: the surface and a
+    // copy offset straight down. Two graphs of z = f(x,y) a constant apart
+    // cannot meet -- but only where the surface IS a graph. Where the
+    // (u,v) -> (x,y) map reverses, the sheet lies over itself and the offset
+    // copy cuts through it. Still edge-manifold, so nothing downstream
+    // catches it.
     //
-    // WHERE it reverses decides whether that matters, and the threshold is
-    // measured rather than guessed. REPORT.surfaceStats counts reversals more
-    // than DEEP_BAND (15%) inside the parameter square; the constant's comment
-    // in report.js carries the table. In short: no deep reversals means every
-    // fold sits in a thin ring at the rim and costs at most about a percent of
-    // the footprint, while one or more means the surface crosses itself
-    // through the middle and the figure jumps to 9-13%. Nothing measured lands
-    // between.
+    // Only deep reversals count: REPORT.surfaceStats uses a 15% band. A rim
+    // fold costs a sliver of the footprint, a fold through the middle an order
+    // of magnitude more. Refusing rim folds too would refuse smooth blobs.
     //
-    // This replaced a stricter rule -- warp.js's own foldWhere.interior, which
-    // uses a 6% band. At 6% a peanut (19 interior reversals, 0.54% of its
-    // footprint) and a clover (31, 1.15%) are refused, while a crescent (182,
-    // 9.42%) and a C ring (219, 13.29%) are refused for a reason twenty times
-    // larger. A rule that cannot tell those apart refuses smooth blobs, which
-    // are the shapes this tool is for.
-    //
-    // Thrown, not warned about: this reuses the silent fallback in runFrom().
-    // A runtime "this might not be printable" is a message the user can
-    // neither check nor act on. Scale-free, so the fold test does not depend
-    // on the size boxes -- the sign of a Jacobian determinant is unchanged by
-    // a positive scale on each axis.
+    // Thrown, not warned about: reuses the silent fallback in runFrom().
+    // Scale-free -- the sign of a Jacobian determinant is unchanged by a
+    // positive scale on each axis -- so the size boxes cannot affect it.
     const fold = REPORT.surfaceStats([w.patch], 1, 1, 1);
     if (fold.deepFolded > 0) {
-        throw new Error('the outline patch folds back over itself (' +
-            fold.deepFolded + ' reversals of ' + fold.samples +
-            ' samples, well inside the patch)');
+        throw new Error('outline patch self-intersects (' +
+            fold.deepFolded + '/' + fold.samples + ' samples reversed)');
     }
 
     // Compare against the ORIGINAL height field, not against f -- that is the
@@ -2003,34 +1941,33 @@ function runWarp() {
         `control net    max |z| ${maxCp.toFixed(2)} (surface lives in 0..1);` +
             ` ${cpOut} of ${(w.degree + 1) ** 2} points outside the geometry`,
         '',
-        'BOUNDARY  (how well the 4 curves follow the traced outline)',
+        'BOUNDARY  (curves vs traced outline)',
         `  xy  ${w.boundary.xyPx.map((v) => v.toFixed(2)).join(' / ')} px per side` +
             `   worst ${w.boundary.xyPxMax.toFixed(2)} px`,
         `  z   ${w.boundary.zGrey.map((v) => fe(v)).join(' / ')} per side` +
             `   worst ${fe(w.boundary.zGreyMax)}`,
         '',
-        'DOMAIN MAP  (det J reversals = the surface folds over itself)',
+        'DOMAIN MAP  (det J reversals = folds)',
         `  det J ranges ${it.detMin.toFixed(3)} .. ${it.detMax.toFixed(3)}` +
             `   orientation ${it.orientation > 0 ? '+' : '-'}`,
         `  ${it.folded} of ${it.samples} samples reversed (${pct(it.folded, it.samples)})` +
             `  -- ${fw.corner} at corners, ${fw.edge} on edges, ${fw.interior} strictly interior`,
         fw.interior === 0
-            ? '  no interior reversals: the patch does not self-intersect'
-            : '  ! interior reversals present - lower the degree, or the outline is too concave',
+            ? '  interior reversals 0'
+            : `  ! ${fw.interior} interior reversals - lower the degree`,
         w.harmonic
-            ? `  relaxed map itself: ${(100 * w.harmonic.fold.foldFraction).toFixed(1)}% reversed,` +
-              ' before the Bezier net approximates it'
+            ? `  relaxed map itself: ${(100 * w.harmonic.fold.foldFraction).toFixed(1)}% reversed`
             : '',
         '',
-        'INTERIOR HEIGHTS  (warped patch vs the stage-1 surface f)',
+        'INTERIOR HEIGHTS  (warped patch vs stage-1 f)',
         `  area-weighted rms ${fe(it.rms)}` +
             `    parameter-space rms ${it.rmsUnweighted.toFixed(3)}`,
-        `  ${it.outside} of ${it.samples} samples landed outside the mask (down-weighted)`,
+        `  ${it.outside}/${it.samples} samples outside the mask (down-weighted)`,
         '',
-        'END TO END  (warped patch vs the original height field)',
+        'END TO END  (warped patch vs height field)',
         `  rms ${fe(e2e)} over ${covIn} px    coverage ${pct(covIn, maskN)} of the mask`,
-        `  stage 1 alone was ${fe(LastFit.st.rms)};` +
-            ` the warp costs ${(e2e - LastFit.st.rms >= 0 ? '+' : '')}${fe(e2e - LastFit.st.rms)}`,
+        `  stage 1 alone ${fe(LastFit.st.rms)},` +
+            ` warp ${(e2e - LastFit.st.rms >= 0 ? '+' : '')}${fe(e2e - LastFit.st.rms)}`,
     ].join('\n');
 }
 
@@ -2141,7 +2078,7 @@ if (typeof window !== 'undefined') window.BEZIVER_READY = BUILD;
 
 } catch (err) {
     if (typeof window !== 'undefined' && window.__beziverBootError) {
-        window.__beziverBootError('This page could not start: ' + err.message +
+        window.__beziverBootError('Page failed to start: ' + err.message +
                                   '. Reload with Shift held.');
     }
     throw err;

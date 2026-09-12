@@ -1,21 +1,18 @@
 'use strict';
 
-// A sample model, so the page is usable before you happen to have a scan to
-// hand. Generated here rather than shipped as an asset: no page weight, and
-// every press gives a different one.
+// A sample model, so the page is usable without a scan to hand. Generated
+// rather than shipped as an asset: no page weight, and every press gives a
+// different one.
 //
-// A pebble: one icosphere, displaced radially by three octaves of value noise
-// plus a few broad dents. ONE smooth closed surface -- there is nothing to
-// blend, no seam to get wrong and no interpenetration to hide, which is why it
-// is both better looking and shorter than the union of primitives it replaced.
+// A pebble: one icosphere displaced radially by three octaves of value noise
+// plus a few broad dents. ONE smooth closed surface, so there is no seam and
+// no interpenetration to handle.
 //
-// It reads as a scanned stone, which is what this tool is for (HANDOFF 19):
-// take a physical object, isolate a region of its surface, fit it. Every part
-// of a pebble is a curved flank worth extracting, so the default orientation
-// and cut-off do not have to hunt for a good region.
+// Every part of a pebble is a curved flank worth extracting, so the default
+// orientation and cut-off do not have to hunt for a good region.
 //
-// It is emitted as a real binary STL and handed to the same loader an uploaded
-// file goes through, so the sample is not a special case anywhere.
+// Emitted as a real binary STL through the same loader an upload takes, so the
+// sample is not a special case anywhere.
 
 // Deterministic, so a pebble can be reproduced from its seed.
 function rng(seed) {
@@ -139,16 +136,13 @@ function binarySTL(verts) {
 // silhouette, where the surface is not turning vertical.
 const CUT = 0.55;
 
-// Amplitude per octave, and the whole point of the shape.
+// Amplitude per octave.
 //
-// Spikiness is HIGH-frequency amplitude; interesting form is LOW-frequency
-// amplitude, and the two are independent. So the falloff here is far steeper
-// than the usual halving: the first octave carries almost all of it and makes
-// the lobes, swells and broad hollows, while the third is surface interest
-// only and never touches the silhouette. Raising OCT[0] fixes featureless;
-// lowering OCT[1..2] fixes spiky. An earlier version had 0.10 / 0.05 / 0.025 --
-// smooth, and the owner's verdict was that it had "no surface element to care
-// about".
+// Spikiness is HIGH-frequency amplitude, form is LOW-frequency amplitude, and
+// the two are independent. So the falloff is far steeper than the usual
+// halving: the first octave makes the lobes, swells and hollows, the third is
+// surface interest that never touches the silhouette. Raise OCT[0] to fix
+// featureless, lower OCT[1..2] to fix spiky.
 const OCT = [0.30, 0.08, 0.02];
 
 // A few broad dents. This is what makes a stone read as weathered rather than

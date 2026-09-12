@@ -229,7 +229,7 @@
 <div id="boot-error" class="boot hidden"></div>
 
 <h1>beziver</h1>
-<p class="lede">Fits a smooth Bézier surface to an STL and emits it as OpenSCAD.</p>
+<p class="lede">B&eacute;zier surface from an STL. Output: OpenSCAD.</p>
 
 <div id="drop-zone">
     <span id="drop-text">Drop an STL here</span>
@@ -244,12 +244,12 @@
         <h2>1. Orientation and cut-off</h2>
         <div class="stage">
             <canvas id="stl-canvas" class="preview" tabindex="0" role="img"
-                    aria-label="Your model standing in the cut-off plane. Drag to tip the model; the cut-off stays level and anything below it is discarded."
-                    title="Drag to tip the model"></canvas>
-            <button id="reset-object" title="Put the model back to the orientation and cut-off it was loaded with">Reset model</button>
+                    aria-label="Model and cut-off plane. Drag to tip the model. Anything below the plane is discarded."
+                    title="Tip the model"></canvas>
+            <button id="reset-object" title="Reset orientation and cut-off">Reset model</button>
             <input type="range" id="stl-water" min="0" max="1000" value="0" step="1"
                    aria-label="Cut-off height" title="Cut-off height">
-            <div id="water-info">Keeps the whole model</div>
+            <div id="water-info">Whole model</div>
             <p class="err hidden" id="err-water"></p>
         </div>
         <p class="note" id="stl-info"></p>
@@ -259,14 +259,14 @@
         <h2>2. Fitted surface</h2>
         <div class="stage">
             <canvas id="warp-canvas" class="preview" tabindex="0" role="img"
-                    aria-label="The fitted surface, seen from the same camera as your model. Drag to rotate the view of both panes; this does not change the result."
-                    title="Drag to rotate the view of both panes"></canvas>
-            <button id="reset-view" title="Look straight down again">Reset view</button>
+                    aria-label="Fitted surface. Drag to rotate the view. Does not change the result."
+                    title="Rotate the view"></canvas>
+            <button id="reset-view" title="Top view">Reset view</button>
             <div class="toggles">
                 <button id="show-grid" class="toggle on" aria-pressed="true"
-                        title="Draw the control net on the surface">Show control grid</button>
+                        title="Control net">Show control grid</button>
                 <button id="show-errors" class="toggle" aria-pressed="false"
-                        title="Colour the surface by how far it is from your model">Show deviation</button>
+                        title="Deviation from the model">Show deviation</button>
             </div>
             <div id="cmap-bar" class="hidden">
                 <canvas id="cmap-canvas" width="12" height="160"></canvas>
@@ -305,7 +305,7 @@
 </div>
 
 <details id="diagnostics">
-    <summary>Inside the fit <span class="sub">the height field, the traced outline, and the surface it produced</span></summary>
+    <summary>Inside the fit <span class="sub">height field, outline, surface</span></summary>
     <div class="body">
 
         <h3>Input</h3>
@@ -319,14 +319,14 @@
             <div class="cv"><span>fitted surface</span><canvas id="result-canvas"></canvas></div>
         </div>
         <pre class="report debug-only" id="report-fit">not run yet</pre>
-        <textarea class="debug-only" id="scad-fit" spellcheck="false" placeholder="OpenSCAD for the rectangular fit"></textarea>
+        <textarea class="debug-only" id="scad-fit" spellcheck="false" placeholder="Rectangular fit"></textarea>
 
         <h3>Outline patch <span class="sub debug-only" id="sub-warp"></span></h3>
         <div class="canvases">
-            <div class="cv"><span>domain map (parameter grid + corners)</span><canvas id="domain-canvas"></canvas></div>
+            <div class="cv"><span>domain map</span><canvas id="domain-canvas"></canvas></div>
         </div>
         <pre class="report debug-only" id="report-warp">not run yet</pre>
-        <textarea class="debug-only" id="scad-warp" spellcheck="false" placeholder="OpenSCAD for the outline patch"></textarea>
+        <textarea class="debug-only" id="scad-warp" spellcheck="false" placeholder="Outline patch"></textarea>
 
     </div>
 </details>
