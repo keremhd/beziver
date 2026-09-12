@@ -1054,7 +1054,7 @@ const clock = () => (typeof performance !== 'undefined' && performance.now
 
 // The longest a touch can wait to be answered.
 const SLICE_MS = 8;
-let ResultJob = null;
+let ResultJob = null, LastPane = 'result';   // so the dragged pane goes first
 
 // What the page is in the middle of, so a fault can say where it happened.
 // Read by the handler in index.html.
@@ -1099,32 +1099,44 @@ function flushRedraw(deadline) {
     Pending.frame = false;
     const until = deadline === undefined ? clock() + SLICE_MS : deadline;
     try {
-        // The frame in flight finishes first. Restarting on each request
-        // would abandon a mesh too big for one slice every time the finger
-        // moved, and nothing would reach the canvas until the drag ended.
-        if (!PreviewJob && Pending.preview) {
-            Pending.preview = false;
-            PreviewJob = startPreview();
-        }
-        if (PreviewJob) {
-            doing('drawing the model');
-            if (PreviewJob.step(until)) {
-                PreviewJob.finish();
-                PreviewJob = null;
+        // One pane at a time, and they take turns. The frame in flight
+        // finishes first: restarting on each request would abandon a mesh too
+        // big for one slice every time the finger moved, and nothing would
+        // reach the canvas until the drag ended. Turns matter for the same
+        // reason -- a drag re-requests BOTH panes on every pointermove, so
+        // always preferring the same one starves the other for the whole
+        // gesture. The camera is shared, so that other one is visibly wrong,
+        // not merely stale.
+        for (;;) {
+            if (!PreviewJob && !ResultJob) {
+                const takeResult = Pending.result &&
+                                   (!Pending.preview || LastPane === 'preview');
+                if (takeResult) {
+                    Pending.result = false;
+                    LastPane = 'result';
+                    ResultJob = startResult();
+                } else if (Pending.preview) {
+                    Pending.preview = false;
+                    LastPane = 'preview';
+                    PreviewJob = startPreview();
+                }
             }
-        }
-        // The right pane waits for the left: two half-rate panes read worse
-        // than one settled and one catching up.
-        if (!PreviewJob && !ResultJob && Pending.result) {
-            Pending.result = false;
-            ResultJob = startResult();
-        }
-        if (!PreviewJob && ResultJob) {
-            doing('drawing the surface');
-            if (ResultJob.step(until)) {
-                ResultJob.finish();
-                ResultJob = null;
+            if (PreviewJob) {
+                doing('drawing the model');
+                if (PreviewJob.step(until)) {
+                    PreviewJob.finish();
+                    PreviewJob = null;
+                }
+            } else if (ResultJob) {
+                doing('drawing the surface');
+                if (ResultJob.step(until)) {
+                    ResultJob.finish();
+                    ResultJob = null;
+                }
+            } else {
+                break;          // nothing in flight and nothing asked for
             }
+            if (clock() >= until) break;
         }
     } catch (e) {
         PreviewJob = ResultJob = null;

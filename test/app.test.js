@@ -1653,6 +1653,25 @@ try {
     }
     check('the surface draw spans frames as well', wslices > 1 && wctx.blits > warpFrom,
         wslices + ' frames');
+
+    // The camera is shared, so a drag in either pane turns both. Each pane is
+    // re-requested on every pointermove, and whichever is never started is
+    // not stale but wrong: it shows the model from a camera that has moved.
+    const lctx = elements['stl-canvas'].getContext();
+    const l0 = lctx.blits, r0 = wctx.blits;
+    fire('warp-canvas', 'pointerdown',
+         { pointerId: 7, pointerType: 'mouse', clientX: 10, clientY: 10 });
+    // One move per frame, the way a finger arrives: draining the queue between
+    // moves would leave nothing pending and hide the starvation entirely.
+    for (let k = 1; k <= 400 && (lctx.blits - l0 < 2 || wctx.blits - r0 < 2); k++) {
+        fireWin('pointermove', { pointerId: 7, clientX: 10 + 4 * k, clientY: 10 + 2 * k });
+        if (frames.length) frames.shift()();
+    }
+    check('a drag redraws the pane it is not over, mid-drag',
+        lctx.blits - l0 >= 2 && wctx.blits - r0 >= 2,
+        (lctx.blits - l0) + ' left, ' + (wctx.blits - r0) + ' right');
+    fireWin('pointerup', { pointerId: 7 });
+    while (frames.length) frames.shift()();
     clickIt('show-grid');        // back to where the rest of the suite expects it
     while (frames.length) frames.shift()();
 
