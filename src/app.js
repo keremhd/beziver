@@ -1153,6 +1153,11 @@ const showGrid = installToggle('show-grid', true, () => {
 // facets at 256 px; the grid fallback samples the same way.
 const RESULT_STEPS = 56;
 
+// Headroom at each end of the height -> grey ramp: the fitted surface
+// overshoots the 0..1 of the height field. Ramp only -- the geometry is drawn
+// unclamped, since clamping z flattens the overshoot onto a plane.
+const RESULT_HEADROOM = 0.05;
+
 function drawResult() {
     if (!Mesh || !ResultGeom || !Depth || !Depth.water || !Input) return;
     const N = previewSize('warp-canvas');
@@ -1200,7 +1205,7 @@ function drawResult() {
     const toCam = (u, v, z01) => {
         const cxs = (u * (W - 1) - fr.ox) / fr.s;
         const cys = (v * (H - 1) - fr.oy) / fr.s;
-        const czs = level + Math.max(0, Math.min(1, z01)) * span;
+        const czs = level + z01 * span;
         const x = Mk[0] * cxs + Mk[3] * cys + Mk[6] * czs;
         const y = Mk[1] * cxs + Mk[4] * cys + Mk[7] * czs;
         const z = Mk[2] * cxs + Mk[5] * cys + Mk[8] * czs;
@@ -1241,27 +1246,29 @@ function drawResult() {
     };
 
     // One parameter pair -> a point on the surface, whichever geometry it is.
-    // Returns false outside the mask, which only the rectangular fit has.
+    // Returns the height there, or NaN outside the mask, which only the
+    // rectangular fit has. NaN and not a negative sentinel: the surface
+    // overshoots below zero near the rim.
     const surfaceAt = (a, b) => {
         if (ResultGeom.kind === 'warp') {
             const q = WARP.patchAt(ResultGeom.patch, a, b);
             toCam(q[0], q[1], q[2]);
             errAt(q[0], q[1]);
-            return Math.max(0, Math.min(1, q[2]));
+            return q[2];
         }
         const px = Math.round(a * (W - 1)), py = Math.round(b * (H - 1));
-        if (!Input.mask[py * W + px]) return -1;
+        if (!Input.mask[py * W + px]) return NaN;
         const z01 = ResultGeom.grid[py * W + px];
         toCam(a, b, z01);
         errAt(a, b);
-        return Math.max(0, Math.min(1, z01));
+        return z01;
     };
 
     for (let j = 0; j <= S; j++) {
         for (let i = 0; i <= S; i++) {
             const idx = j * (S + 1) + i;
             const h = surfaceAt(i / S, j / S);
-            if (h < 0) continue;
+            if (!Number.isFinite(h)) continue;
             vx[idx] = OUT[0]; vy[idx] = OUT[1]; vz[idx] = OUT[2];
             vh[idx] = h; ve[idx] = ERR[0]; vc[idx] = ERR[1]; ok[idx] = 1;
         }
@@ -1282,7 +1289,9 @@ function drawResult() {
             RGB[0] = col[0] * lam; RGB[1] = col[1] * lam; RGB[2] = col[2] * lam;
             return;
         }
-        const u = l1 * hh[0] + l2 * hh[1] + l3 * hh[2];
+        const h = l1 * hh[0] + l2 * hh[1] + l3 * hh[2];
+        const u = Math.max(0, Math.min(1,
+            (h + RESULT_HEADROOM) / (1 + 2 * RESULT_HEADROOM)));
         RGB[0] = RGB[1] = RGB[2] = (20 + u * 235) * lam;
     };
 
@@ -1334,7 +1343,7 @@ function drawSurfaceGrid(R, P, surfaceAt, OUT) {
     // linear tessellation, so allow a hair of depth slack before rejecting.
     const bias = 0.01 * P.rad;
     const mark = (a, b) => {
-        if (surfaceAt(a, b) < 0) return;
+        if (!Number.isFinite(surfaceAt(a, b))) return;
         const x = Math.round(P.toX(OUT[0])), y = Math.round(P.toY(OUT[1]));
         if (x < 0 || y < 0 || x >= R.N || y >= R.N) return;
         const idx = y * R.N + x;
