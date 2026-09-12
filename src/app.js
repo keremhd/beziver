@@ -8,7 +8,7 @@ const SAMPLE = require('./sample.js');
 // Bumped whenever index.html and this file must ship together; the page
 // checks it so a stale bundle announces itself instead of silently doing
 // nothing. Keep in sync with window.BEZIVER_BUILD in index.html.
-const BUILD = 20;
+const BUILD = 21;
 
 // The text analyses under Diagnostics were written for the rewrite, not for a
 // person using the tool: they caught the folds, the oscillating control net
@@ -438,6 +438,7 @@ function loadMesh(buffer, name, cut) {
     deriveCapture();
     ErrField = null;
     CapExtent = null;
+    Depth = null;
     sizeTouched = false;
     // Park the plane on the model's underside: the whole model is kept, and
     // the water is touching it rather than floating a radius below.
@@ -553,7 +554,7 @@ function installReset(id, fn) {
 // unrelated pictures.
 function afterCameraMove() {
     if (!Mesh) return;
-    try { drawPreview(); drawResult(); } catch (e) { fail(e); }
+    requestRedraw('both');
 }
 
 blockDrag(el('stl-water'));
@@ -564,24 +565,92 @@ for (const ev of ['mouseenter', 'focus']) {
     el('stl-water').addEventListener(ev, () => flashWaterInfo());
 }
 
+// Where the value sits along the bar, as a CSS length: PAD at each end is the
+// grip's own travel, so 0 and 1000 land on the ends rather than half a grip
+// past them. Both the grip and the readout hang on their centres, so this is
+// the position of the value itself.
+const WATER_PAD = 7;
+function waterOffset() {
+    const f = Math.max(0, Math.min(1, num('stl-water', 0) / 1000));
+    return 'calc(' + WATER_PAD + 'px + (100% - ' + (2 * WATER_PAD) + 'px) * ' + f + ')';
+}
+
+// The grip is ours to draw, so it is ours to move: this is what follows the
+// finger. Called from updateWaterInfo, which every path that changes the value
+// already goes through -- drag, arrow key, reset and load alike.
+function paintWaterGrip() {
+    const g = el('water-grip');
+    if (g.style) g.style.bottom = waterOffset();
+}
+
 let waterInfoTimer = null;
 function flashWaterInfo() {
     const n = el('water-info');
     updateWaterInfo();
     n.className = 'show';
-    // Track the thumb: the slider runs bottom (0) to top (1000), inset by the
-    // same padding at each end.
-    if (n.style) n.style.bottom = (6 + 0.86 * (num('stl-water', 0) / 10)) + '%';
+    if (n.style) n.style.bottom = waterOffset();
     if (waterInfoTimer) clearTimeout(waterInfoTimer);
     waterInfoTimer = setTimeout(() => { n.className = ''; }, 1600);
 }
 
-el('stl-water').addEventListener('input', () => {
+function onWaterInput() {
     flashWaterInfo();
     if (!Mesh) return;
     try { captureDepth(); refreshExportSizes(); } catch (e) { return fail(e); }
     scheduleRun('fit');   // the height field is already rebuilt
-});
+}
+
+el('stl-water').addEventListener('input', onWaterInput);
+
+// The cut-off is driven from pointer events, not by the native vertical range,
+// which is not dependably draggable: laid out horizontally inside the tall box
+// it answers a tap and nothing else. The capture also keeps the value with a
+// finger that has left the strip. The input listener above serves the keyboard.
+installWaterDrag();
+function installWaterDrag() {
+    const w = el('stl-water');
+    if (!w.addEventListener || !w.getBoundingClientRect) return;
+    let id = null;
+    const PAD = 7;   // matches the slider's own padding: the thumb's travel
+
+    const setFrom = (clientY) => {
+        const r = w.getBoundingClientRect();
+        const span = Math.max(1, r.height - 2 * PAD);
+        // Bottom of the travel is 0, top is 1000: the water rises as you drag up.
+        const t = 1 - (clientY - r.top - PAD) / span;
+        const v = String(Math.round(1000 * Math.max(0, Math.min(1, t))));
+        if (v === w.value) return;
+        w.value = v;
+        onWaterInput();
+    };
+
+    w.addEventListener('pointerdown', (e) => {
+        id = e.pointerId;
+        if (w.setPointerCapture) w.setPointerCapture(id);
+        // preventDefault drops the native handling, and with it the focus it
+        // would have given: the keyboard path needs it back.
+        if (e.preventDefault) e.preventDefault();
+        if (w.focus) w.focus();
+        Dragging = true;
+        setFrom(e.clientY);
+        flashWaterInfo();
+    });
+    w.addEventListener('pointermove', (e) => {
+        if (e.pointerId !== id) return;
+        if (e.preventDefault) e.preventDefault();
+        setFrom(e.clientY);
+    });
+    const drop = (e) => {
+        if (e.pointerId !== id) return;
+        id = null;
+        if (w.releasePointerCapture) { try { w.releasePointerCapture(e.pointerId); } catch (_) {} }
+        if (!Dragging) return;
+        Dragging = false;
+        redrawPreviews();      // the settled frame, at full resolution
+    };
+    w.addEventListener('pointerup', drop);
+    w.addEventListener('pointercancel', drop);
+}
 
 // A 0-1000 slider position means nothing. The slider sets a height, so the
 // height is the figure that leads; the percentage is derived from it and the
@@ -592,6 +661,7 @@ el('stl-water').addEventListener('input', () => {
 // change how much of it is under. The number that must not move is the height.
 function updateWaterInfo() {
     const n = el('water-info');
+    paintWaterGrip();
     if (!Mesh) { n.textContent = 'Whole model'; return; }
     const ext = captureExtent();
     const kept = ext.hi[2] - Math.max(waterLevel(), ext.lo[2]);
@@ -604,12 +674,20 @@ function updateWaterInfo() {
 
 // Depth render along the CAPTURE axis + water threshold + commit as the height
 // field. There is no separate "use this" step: the depth map IS the input.
+let DepthKey = '';
 function captureDepth() {
     if (!Mesh) return;
     const n = autoResolution(Mesh.count);
-    const rot = STL.transformVerts(Mesh.verts, CapM, Mesh.bounds.center);
-
-    Depth = STL.depthRender(rot, n, n, {});
+    // The render depends on the capture orientation alone -- the cut-off is
+    // applied to its output below -- so a cut-off drag reuses it and costs one
+    // applyWater instead of rasterising every triangle (55 ms at 200k on a
+    // laptop, several times that on a phone). loadMesh nulls Depth to drop it.
+    const key = n + ':' + CapM.join(',');
+    if (!Depth || DepthKey !== key) {
+        const rot = STL.transformVerts(Mesh.verts, CapM, Mesh.bounds.center);
+        Depth = STL.depthRender(rot, n, n, {});
+        DepthKey = key;
+    }
 
     // applyWater takes a fraction of the depth render's own z range; the
     // slider is an absolute height, so convert here rather than let a fraction
@@ -620,7 +698,7 @@ function captureDepth() {
     Depth.water = water;
     ErrField = null;
     updateWaterInfo();     // the mm figure needs the render's z range
-    drawPreview();
+    requestRedraw();
 
     el('stl-info').textContent =
         `${FileName} \u2014 ${Mesh.count.toLocaleString()} triangles`;
@@ -879,6 +957,29 @@ const lambert = (ax, ay, az, bx, by, bz) => {
 };
 
 // ------------------------------------------------- left pane: the model
+
+// Both previews rasterise every triangle in software, and a drag delivers
+// pointermove faster than that finishes. One redraw per frame, from whatever
+// the state is by then, keeps the queue from growing past what the main thread
+// can answer. Without rAF (the tests' DOM stub) there is no frame to wait for.
+const Pending = { preview: false, result: false, frame: false };
+function requestRedraw(what) {
+    Pending.preview = true;
+    if (what === 'both') Pending.result = true;
+    if (typeof requestAnimationFrame !== 'function') return flushRedraw();
+    if (Pending.frame) return;
+    Pending.frame = true;
+    requestAnimationFrame(flushRedraw);
+}
+
+function flushRedraw() {
+    const preview = Pending.preview, result = Pending.result;
+    Pending.preview = Pending.result = Pending.frame = false;
+    try {
+        if (preview) drawPreview();
+        if (result) drawResult();
+    } catch (e) { fail(e); }
+}
 
 function drawPreview() {
     if (!Mesh) return;
@@ -1547,7 +1648,7 @@ function dragBy(target, dx, dy) {
     // straight off the mesh, so it does not wait for a depth render. The
     // pipeline waits for the usual debounce, and restarts from 'input' because
     // the orthographic axis has moved.
-    try { drawPreview(); drawResult(); } catch (err) { return fail(err); }
+    requestRedraw('both');
     scheduleRun('input');
 }
 

@@ -177,6 +177,10 @@ for (const id of htmlIds) {
     if (tag && /\bchecked\b/.test(tag[0])) e.checked = true;
     e.className = initialClass(id);
     e.select = () => { e.selected = true; };
+    e.focus = () => { e.focused = true; };
+    // A fixed box, so a pointer position maps to a slider value predictably.
+    e.getBoundingClientRect = () => ({ left: 0, top: 100, right: 44, bottom: 400,
+                                       width: 44, height: 300 });
     e.attrs = {};
     e.setAttribute = (k, v) => { e.attrs[k] = String(v); };
     e.getAttribute = (k) => (k in e.attrs ? e.attrs[k] : null);
@@ -1112,12 +1116,13 @@ try {
     check('the inline error moved onto the canvas with it',
         html.indexOf('id="err-water"') > html.indexOf('id="stl-canvas"') &&
         html.indexOf('id="err-water"') < html.indexOf('id="stl-info"'));
-    check('no hand-rolled slider: no drag listener',
-        !/stl-water'\).addEventListener\('(mouse|pointer)down'/.test(appSrc));
-    // 'input' is the event a keyboard arrow raises as well as a drag, so
-    // driving the pipeline off it is what makes the keyboard work at all.
+    // 'input' is what a keyboard arrow raises, so the pipeline hangs off it and
+    // the keyboard keeps working whatever the pointer does.
     check('it is driven from input, which is what arrow keys fire',
         !!(handlers['stl-water'] || {}).input);
+    check('and a drag is tracked by pointer, not left to the native range',
+        !!(handlers['stl-water'] || {}).pointerdown &&
+        !!(handlers['stl-water'] || {}).pointermove);
 
     const camPre = rot().CamM, objPre = rot().ObjM;
     const [wlo, whi] = rot().zRange;
@@ -1142,6 +1147,35 @@ try {
     fire('stl-water', 'mouseenter');
     check('and hovering it is enough to see the figure',
         elements['water-info'].className === 'show');
+
+    // The drag: the box is top 100, height 300, 7px of padding at each end, so
+    // the travel runs from y=393 at the low end up to y=107 at the high one.
+    fire('stl-water', 'pointerdown', { pointerId: 1, clientY: 393 });
+    check('grabbing at the bottom of the travel is the low end',
+        elements['stl-water'].value === '0', elements['stl-water'].value);
+    fire('stl-water', 'pointermove', { pointerId: 1, clientY: 250 });
+    check('and the value follows the pointer up',
+        Math.abs(Number(elements['stl-water'].value) - 500) <= 5,
+        elements['stl-water'].value);
+    // The complaint this answers: the grip has to be seen to move with the
+    // finger, not just the cut-off it sets.
+    const gripAt = () => {
+        const m = /\* ([\d.]+)\)/.exec(elements['water-grip'].style.bottom || '');
+        return m ? Number(m[1]) : NaN;
+    };
+    check('and the grip is drawn where the finger is',
+        Math.abs(gripAt() - 0.5) <= 0.01, elements['water-grip'].style.bottom);
+    fire('stl-water', 'pointermove', { pointerId: 1, clientY: 350 });
+    check('and moves back down with it',
+        Math.abs(gripAt() - 0.15) <= 0.02, elements['water-grip'].style.bottom);
+    // Past the end of the strip, not off the control: the capture is the point.
+    fire('stl-water', 'pointermove', { pointerId: 1, clientY: 900 });
+    check('a finger past the end of the strip stays on the slider',
+        elements['stl-water'].value === '0', elements['stl-water'].value);
+    fire('stl-water', 'pointermove', { pointerId: 2, clientY: 250 });
+    check('and a second pointer does not steer it',
+        elements['stl-water'].value === '0', elements['stl-water'].value);
+    fire('stl-water', 'pointerup', { pointerId: 1, clientY: 900 });
     await sleep(900);
 } catch (e) {
     fail++;

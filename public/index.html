@@ -8,7 +8,7 @@
     // but wires up nothing -- every control silently dead. Rather than leave
     // that to guesswork, the page states which build it expects and complains
     // if the script never initialises or reports a different one.
-    window.BEZIVER_BUILD = 20;
+    window.BEZIVER_BUILD = 21;
     (function () {
         var hideTimer = null;
         // A message the page did not survive stays, since nothing else on the
@@ -153,18 +153,27 @@
         .slider > span { font-size: 12px; color: var(--muted); }
 
         /* The cut-off lives on the canvas, along the edge the plane travels
-           along: drag up, the water rises. writing-mode + direction:rtl is what
-           puts the maximum at the TOP; appearance:slider-vertical is the older
-           WebKit spelling of the same thing. */
+           along: drag up, the water rises. The input itself is invisible and
+           is only the hit area and the keyboard target; the bar and the grip
+           below are what is seen, and app.js puts the grip where the value is.
+           Drawing them is what makes the grip follow a finger -- a native
+           vertical range is not rendered consistently enough to do that. */
         #stl-water { position: absolute; right: 9px; top: 46px; bottom: 12px;
                      width: 26px; margin: 0; padding: 7px 0; cursor: pointer;
-                     writing-mode: vertical-lr; direction: rtl;
-                     -webkit-appearance: slider-vertical; appearance: slider-vertical;
-                     accent-color: #eef1f5; background: rgba(18,20,24,.34);
-                     border-radius: 13px; }
+                     opacity: 0; z-index: 2; }
+        #water-track { position: absolute; right: 9px; top: 46px; bottom: 12px;
+                       width: 26px; border-radius: 13px; pointer-events: none;
+                       background: rgba(18,20,24,.34); z-index: 1; }
+        #stl-water:focus-visible ~ #water-track { box-shadow: 0 0 0 2px #2563eb; }
+        /* translateY(50%) hangs the grip on its own centre, so `bottom` is the
+           position of the value rather than of the grip's lower edge. */
+        #water-grip { position: absolute; left: 50%; width: 20px; height: 20px;
+                      transform: translate(-50%, 50%); border-radius: 50%;
+                      background: #eef1f5; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
         /* The figure is precise on demand, not permanent furniture: it appears
            beside the thumb while the slider is being used and fades when idle. */
-        #water-info { position: absolute; right: 42px; font-size: 12px;
+        #water-info { position: absolute; right: 42px; transform: translateY(50%);
+                      font-size: 12px;
                       font-weight: 600; color: #fff; background: rgba(18,20,24,.82);
                       padding: 3px 8px; border-radius: 4px; white-space: nowrap;
                       opacity: 0; transition: opacity .18s; pointer-events: none; }
@@ -252,7 +261,9 @@
         .slider input[type=range] { touch-action: pan-y; }
         @media (pointer: coarse) {
             /* A miss on the 26px strip lands on the canvas and tips the model. */
-            #stl-water { width: 44px; right: 4px; }
+            #stl-water, #water-track { width: 44px; right: 4px; }
+            #water-track { border-radius: 22px; }
+            #water-grip { width: 28px; height: 28px; }
             #water-info { right: 54px; }
             .slider input[type=range] { padding: 13px 0; }
         }
@@ -283,6 +294,7 @@
             <button id="reset-object" title="Reset orientation and cut-off">Reset model</button>
             <input type="range" id="stl-water" min="0" max="1000" value="0" step="1"
                    aria-label="Cut-off height" title="Cut-off height">
+            <div id="water-track" aria-hidden="true"><div id="water-grip"></div></div>
             <div id="water-info">Whole model</div>
             <p class="err hidden" id="err-water"></p>
         </div>
